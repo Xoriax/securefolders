@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { api, errorMessage } from "../api";
-import type { FileEntry, VaultSummary } from "../types";
+import type { FileEntry, TransferProgress, VaultSummary } from "../types";
 import { TotpSetupModal } from "./TotpSetupModal";
 import { VaultSettingsModal } from "./VaultSettingsModal";
+import { FilePreviewModal } from "./FilePreviewModal";
 
 interface Props {
   vault: VaultSummary;
@@ -25,6 +27,9 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
   const [error, setError] = useState<string | null>(null);
   const [showTotpSetup, setShowTotpSetup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [previewingFile, setPreviewingFile] = useState<FileEntry | null>(null);
+  const [progress, setProgress] = useState<TransferProgress | null>(null);
+  const progressClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(() => {
     api
@@ -47,6 +52,23 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
     }, 10_000);
     return () => clearInterval(interval);
   }, [vault.id, onLocked]);
+
+  useEffect(() => {
+    const unlisten = listen<TransferProgress>("vault://transfer-progress", (event) => {
+      if (event.payload.vaultId !== vault.id) return;
+      setProgress(event.payload);
+
+      if (progressClearTimer.current) clearTimeout(progressClearTimer.current);
+      if (event.payload.bytesDone >= event.payload.bytesTotal) {
+        // Let the bar sit at 100% briefly instead of vanishing instantly.
+        progressClearTimer.current = setTimeout(() => setProgress(null), 500);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+      if (progressClearTimer.current) clearTimeout(progressClearTimer.current);
+    };
+  }, [vault.id]);
 
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent(async (event) => {
@@ -97,6 +119,12 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
     }
   }
 
+  const progressPercent = progress
+    ? progress.bytesTotal === 0
+      ? 100
+      : Math.round((progress.bytesDone / progress.bytesTotal) * 100)
+    : 0;
+
   return (
     <div>
       <div className="vault-toolbar">
@@ -125,6 +153,20 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
         Glissez-deposez des fichiers ici pour les chiffrer et les ajouter au coffre
       </div>
 
+      {progress && (
+        <div className="progress-box">
+          <div className="progress-box-label">
+            <span>
+              {progress.direction === "import" ? "Chiffrement" : "Dechiffrement"} de {progress.fileName}
+            </span>
+            <span>{progressPercent}%</span>
+          </div>
+          <div className="progress-bar">
+            <div className="progress-bar-fill" style={{ width: `${progressPercent}%` }} />
+          </div>
+        </div>
+      )}
+
       {error && <div className="error-text">{error}</div>}
 
       {files.length === 0 ? (
@@ -139,6 +181,7 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
                 <span className="file-size">{formatSize(file.size)}</span>
               </div>
               <div className="row-actions">
+                <button onClick={() => setPreviewingFile(file)}>Apercu</button>
                 <button onClick={() => handleExport(file.id)}>Exporter</button>
                 <button onClick={() => handleRemove(file.id)}>Supprimer</button>
               </div>
@@ -165,6 +208,14 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
           onRenamed={(newName) => onVaultUpdated({ ...vault, name: newName })}
           onTotpDisabled={() => onVaultUpdated({ ...vault, totpEnabled: false })}
           onDeleted={onDeleted}
+        />
+      )}
+
+      {previewingFile && (
+        <FilePreviewModal
+          vaultId={vault.id}
+          file={previewingFile}
+          onClose={() => setPreviewingFile(null)}
         />
       )}
     </div>

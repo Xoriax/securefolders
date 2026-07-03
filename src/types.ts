@@ -26,3 +26,17 @@ export interface TotpSetup {
 export interface ConfirmTotpResult {
   recoveryCodes: string[];
 }
+
+export interface TransferProgress {
+  vaultId: string;
+  fileName: string;
+  direction: "import" | "export";
+  bytesDone: number;
+  bytesTotal: number;
+}
+
+export type FilePreview =
+  | { kind: "image"; path: string }
+  | { kind: "text"; content: string; truncated: boolean }
+  | { kind: "tooLarge" }
+  | { kind: "unsupported" };

@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConfirmTotpResult, FileEntry, TotpSetup, UnlockResult, VaultSummary } from "./types";
+import type {
+  ConfirmTotpResult,
+  FileEntry,
+  FilePreview,
+  TotpSetup,
+  UnlockResult,
+  VaultSummary,
+} from "./types";
 
 // Thin typed wrapper around the Tauri commands exposed by src-tauri/src/commands.rs.
 // Every call can reject with the French error message produced by AppError on the Rust side.
@@ -40,6 +47,9 @@ export const api = {
 
   exportFile: (vaultId: string, fileId: string) =>
     invoke<string>("export_file", { vaultId, fileId }),
+
+  previewFile: (vaultId: string, fileId: string) =>
+    invoke<FilePreview>("preview_file", { vaultId, fileId }),
 
   isVaultUnlocked: (vaultId: string) =>
     invoke<boolean>("is_vault_unlocked", { vaultId }),
