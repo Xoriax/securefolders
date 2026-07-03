@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { TotpSetup } from "../types";
+import { RecoveryCodesDisplay } from "./RecoveryCodesDisplay";
 
 interface Props {
   vaultId: string;
@@ -11,6 +12,7 @@ interface Props {
 export function TotpSetupModal({ vaultId, onClose, onEnabled }: Props) {
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -23,8 +25,8 @@ export function TotpSetupModal({ vaultId, onClose, onEnabled }: Props) {
     setError(null);
     setBusy(true);
     try {
-      await api.confirmTotp(vaultId, code);
-      onEnabled();
+      const result = await api.confirmTotp(vaultId, code);
+      setRecoveryCodes(result.recoveryCodes);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -33,10 +35,12 @@ export function TotpSetupModal({ vaultId, onClose, onEnabled }: Props) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={recoveryCodes ? undefined : onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Activer la double authentification</h2>
-        {!setup ? (
+        {recoveryCodes ? (
+          <RecoveryCodesDisplay codes={recoveryCodes} onAcknowledge={onEnabled} />
+        ) : !setup ? (
           <p style={{ color: "var(--text-dim)", fontSize: 13 }}>
             {error ?? "Generation du secret..."}
           </p>

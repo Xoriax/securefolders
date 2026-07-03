@@ -22,3 +22,7 @@ export interface TotpSetup {
   secretBase32: string;
   qrCodeDataUrl: string;
 }
+
+export interface ConfirmTotpResult {
+  recoveryCodes: string[];
+}

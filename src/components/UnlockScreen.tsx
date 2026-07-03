@@ -12,6 +12,7 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -38,7 +39,11 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
     setError(null);
     setBusy(true);
     try {
-      await api.verifyTotp(vault.id, code);
+      if (useRecoveryCode) {
+        await api.unlockWithRecoveryCode(vault.id, code);
+      } else {
+        await api.verifyTotp(vault.id, code);
+      }
       onUnlocked();
     } catch (err) {
       setError(errorMessage(err));
@@ -52,9 +57,11 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
       <div className="lock-icon">🔒</div>
       <h2 style={{ margin: 0 }}>{vault.name}</h2>
       <p style={{ color: "var(--text-dim)", fontSize: 13, margin: 0 }}>
-        {needsTotp
-          ? "Entrez le code a 6 chiffres de votre application d'authentification."
-          : "Entrez le mot de passe maitre pour deverrouiller ce coffre."}
+        {!needsTotp
+          ? "Entrez le mot de passe maitre pour deverrouiller ce coffre."
+          : useRecoveryCode
+            ? "Entrez un de vos codes de recuperation a usage unique."
+            : "Entrez le code a 6 chiffres de votre application d'authentification."}
       </p>
 
       {!needsTotp ? (
@@ -81,16 +88,26 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
       ) : (
         <form onSubmit={submitCode}>
           <div className="field">
-            <input
-              className="code-input"
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="000000"
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-              autoFocus
-            />
+            {useRecoveryCode ? (
+              <input
+                type="text"
+                placeholder="XXXX-XXXX-XXXX-XXXX"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoFocus
+              />
+            ) : (
+              <input
+                className="code-input"
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="000000"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                autoFocus
+              />
+            )}
           </div>
           {error && <div className="error-text">{error}</div>}
           <div className="modal-actions" style={{ justifyContent: "center" }}>
@@ -100,11 +117,33 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={busy || code.length !== 6}
+              disabled={busy || (useRecoveryCode ? code.trim().length === 0 : code.length !== 6)}
             >
               {busy ? "Verification..." : "Valider"}
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setUseRecoveryCode(!useRecoveryCode);
+              setCode("");
+              setError(null);
+            }}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-dim)",
+              fontSize: 12,
+              textDecoration: "underline",
+              cursor: "pointer",
+              display: "block",
+              margin: "12px auto 0",
+            }}
+          >
+            {useRecoveryCode
+              ? "Utiliser le code de l'application d'authentification"
+              : "Application d'authentification perdue ? Utiliser un code de recuperation"}
+          </button>
         </form>
       )}
     </div>

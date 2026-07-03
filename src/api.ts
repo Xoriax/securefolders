@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FileEntry, TotpSetup, UnlockResult, VaultSummary } from "./types";
+import type { ConfirmTotpResult, FileEntry, TotpSetup, UnlockResult, VaultSummary } from "./types";
 
 // Thin typed wrapper around the Tauri commands exposed by src-tauri/src/commands.rs.
 // Every call can reject with the French error message produced by AppError on the Rust side.
@@ -15,6 +15,9 @@ export const api = {
   verifyTotp: (vaultId: string, code: string) =>
     invoke<void>("verify_totp", { vaultId, code }),
 
+  unlockWithRecoveryCode: (vaultId: string, code: string) =>
+    invoke<void>("unlock_with_recovery_code", { vaultId, code }),
+
   lockVault: (vaultId: string) => invoke<void>("lock_vault", { vaultId }),
 
   lockAllVaults: () => invoke<void>("lock_all_vaults"),
@@ -22,7 +25,10 @@ export const api = {
   setupTotp: (vaultId: string) => invoke<TotpSetup>("setup_totp", { vaultId }),
 
   confirmTotp: (vaultId: string, code: string) =>
-    invoke<void>("confirm_totp", { vaultId, code }),
+    invoke<ConfirmTotpResult>("confirm_totp", { vaultId, code }),
+
+  regenerateRecoveryCodes: (vaultId: string) =>
+    invoke<string[]>("regenerate_recovery_codes", { vaultId }),
 
   listFiles: (vaultId: string) => invoke<FileEntry[]>("list_files", { vaultId }),
 

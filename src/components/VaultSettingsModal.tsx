@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import type { VaultSummary } from "../types";
+import { RecoveryCodesDisplay } from "./RecoveryCodesDisplay";
 
 interface Props {
   vault: VaultSummary;
@@ -16,9 +17,24 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [confirmDeleteName, setConfirmDeleteName] = useState("");
+  const [newRecoveryCodes, setNewRecoveryCodes] = useState<string[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  async function handleRegenerateRecoveryCodes() {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      const codes = await api.regenerateRecoveryCodes(vault.id);
+      setNewRecoveryCodes(codes);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleRename(e: React.FormEvent) {
     e.preventDefault();
@@ -91,10 +107,20 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={newRecoveryCodes ? undefined : onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 440 }}>
         <h2>Parametres du coffre</h2>
 
+        {newRecoveryCodes ? (
+          <RecoveryCodesDisplay
+            codes={newRecoveryCodes}
+            onAcknowledge={() => {
+              setNewRecoveryCodes(null);
+              setMessage("Codes de recuperation regeneres.");
+            }}
+          />
+        ) : (
+        <>
         <form onSubmit={handleRename}>
           <div className="field">
             <label>Nom du coffre</label>
@@ -145,9 +171,19 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
         {vault.totpEnabled && (
           <div className="field" style={{ marginTop: 18 }}>
             <label>Double authentification</label>
-            <button type="button" className="btn" onClick={handleDisableTotp} disabled={busy}>
-              Desactiver la 2FA
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={handleRegenerateRecoveryCodes}
+                disabled={busy}
+              >
+                Regenerer les codes de recuperation
+              </button>
+              <button type="button" className="btn" onClick={handleDisableTotp} disabled={busy}>
+                Desactiver la 2FA
+              </button>
+            </div>
           </div>
         )}
 
@@ -184,6 +220,8 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
             Fermer
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

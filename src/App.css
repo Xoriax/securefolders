@@ -378,6 +378,13 @@
   height: 180px;
 }
 
+.recovery-codes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 .secret-code {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 12px;
