@@ -103,6 +103,9 @@ pub fn verify_totp(
 #[tauri::command]
 pub fn lock_vault(state: State<AppState>, vault_id: Uuid) {
     state.lock_vault(vault_id);
+    if let Err(e) = vault::wipe_temp_exports(vault_id) {
+        log::warn!("echec du nettoyage des exports temporaires pour {vault_id}: {e}");
+    }
 }
 
 /// Locks every unlocked vault at once — used by the settings "lock all"
@@ -110,6 +113,9 @@ pub fn lock_vault(state: State<AppState>, vault_id: Uuid) {
 #[tauri::command]
 pub fn lock_all_vaults(state: State<AppState>) {
     state.lock_all();
+    if let Err(e) = vault::wipe_all_temp_exports() {
+        log::warn!("echec du nettoyage des exports temporaires: {e}");
+    }
 }
 
 #[tauri::command]
@@ -183,9 +189,10 @@ pub fn remove_file(
     vault::remove_file(&vault_dir, file_id)
 }
 
-/// Decrypts a file to a caller-supplied temporary directory. The frontend is
-/// responsible for deleting this plaintext copy once the user is done with
-/// it (and on lock/exit) — see the "nettoyage des fichiers temporaires"
+/// Decrypts a file into an app-managed temp directory (never a location the
+/// user picks) and returns its path so the frontend can open it with the
+/// system's default application. Wiped automatically by `lock_vault` /
+/// `lock_all_vaults` — see the "nettoyage des fichiers temporaires"
 /// requirement in the security checklist.
 #[tauri::command]
 pub fn export_file(
@@ -193,15 +200,69 @@ pub fn export_file(
     state: State<AppState>,
     vault_id: Uuid,
     file_id: Uuid,
-    dest_dir: String,
 ) -> AppResult<String> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    let path = vault::export_file(&vault_dir, &dek, file_id, &PathBuf::from(dest_dir))?;
+    let path = vault::export_file(&vault_dir, &dek, file_id)?;
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 pub fn is_vault_unlocked(state: State<AppState>, vault_id: Uuid) -> bool {
     state.is_unlocked(vault_id)
+}
+
+/// Permanently deletes a vault (metadata + encrypted files). Requires an
+/// active session so a stolen/borrowed machine can't be used to destroy a
+/// vault without first knowing its password (and TOTP code, if enabled).
+#[tauri::command]
+pub fn delete_vault(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    vault::delete_vault(&app_data_dir(&app)?, vault_id)?;
+    state.lock_vault(vault_id);
+    let _ = vault::wipe_temp_exports(vault_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn rename_vault(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    new_name: String,
+) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    if new_name.trim().is_empty() {
+        return Err(AppError::Crypto("le nom du coffre ne peut pas etre vide".into()));
+    }
+    vault::rename_vault(&app_data_dir(&app)?, vault_id, new_name.trim())
+}
+
+/// Rotates the master password. Re-verifies `old_password` independently of
+/// the current session (defense-in-depth against an unattended unlocked
+/// vault) before re-wrapping the DEK; the encrypted files themselves are
+/// never touched.
+#[tauri::command]
+pub fn change_master_password(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    old_password: String,
+    new_password: String,
+) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    if new_password.len() < 8 {
+        return Err(AppError::Crypto(
+            "le nouveau mot de passe doit contenir au moins 8 caracteres".into(),
+        ));
+    }
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::change_master_password(&vault_dir, &old_password, &new_password)
+}
+
+#[tauri::command]
+pub fn disable_totp(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> AppResult<()> {
+    let dek = state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::disable_totp(&vault_dir, &dek)
 }

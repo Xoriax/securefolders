@@ -36,8 +36,44 @@ pub struct VaultMetadata {
     pub totp_enabled: bool,
     /// TOTP secret, encrypted with the DEK. `None` unless 2FA is enabled.
     pub totp_secret_encrypted: Option<Vec<u8>>,
+    /// HMAC-SHA256 (keyed by the DEK) over the security-critical fields
+    /// above. Verified on every unlock so that editing `vault.json` outside
+    /// the app — e.g. flipping `totp_enabled` to `false` to strip 2FA —
+    /// is detected instead of silently changing the app's behaviour.
+    pub integrity_tag: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub files: Vec<FileEntry>,
+}
+
+/// Fields covered by `integrity_tag`. Kept separate from `VaultMetadata` so
+/// its serialization (and therefore the MAC input) stays stable regardless
+/// of unrelated metadata changes (e.g. `files`, `name`).
+#[derive(Serialize)]
+struct IntegrityFields<'a> {
+    id: Uuid,
+    totp_enabled: bool,
+    totp_secret_encrypted: &'a Option<Vec<u8>>,
+}
+
+fn integrity_message(metadata: &VaultMetadata) -> Vec<u8> {
+    serde_json::to_vec(&IntegrityFields {
+        id: metadata.id,
+        totp_enabled: metadata.totp_enabled,
+        totp_secret_encrypted: &metadata.totp_secret_encrypted,
+    })
+    .expect("serializing integrity fields cannot fail")
+}
+
+fn seal_integrity(metadata: &mut VaultMetadata, dek: &VaultKey) {
+    metadata.integrity_tag = crypto::compute_mac(dek, &integrity_message(metadata));
+}
+
+fn verify_integrity(metadata: &VaultMetadata, dek: &VaultKey) -> AppResult<()> {
+    if crypto::verify_mac(dek, &integrity_message(metadata), &metadata.integrity_tag) {
+        Ok(())
+    } else {
+        Err(AppError::VaultTampered)
+    }
 }
 
 /// Lightweight pointer kept in the global index so vaults can live anywhere
@@ -118,7 +154,7 @@ pub fn create_vault(
     let dek = crypto::random_dek();
     let dek_encrypted = crypto::encrypt(&master_key, &dek.0)?;
 
-    let metadata = VaultMetadata {
+    let mut metadata = VaultMetadata {
         id: Uuid::new_v4(),
         name: name.to_string(),
         salt: salt.to_vec(),
@@ -126,9 +162,11 @@ pub fn create_vault(
         dek_encrypted,
         totp_enabled: false,
         totp_secret_encrypted: None,
+        integrity_tag: Vec::new(),
         created_at: Utc::now(),
         files: Vec::new(),
     };
+    seal_integrity(&mut metadata, &dek);
     save_metadata(&vault_dir, &metadata)?;
 
     let mut index = load_index(app_data_dir)?;
@@ -172,6 +210,54 @@ pub fn find_vault_path(app_data_dir: &Path, vault_id: Uuid) -> AppResult<PathBuf
         .ok_or(AppError::VaultNotFound)
 }
 
+/// Deletes a vault's folder (metadata + encrypted files) and removes it from
+/// the index. Irreversible — the caller is expected to have already
+/// confirmed this with the user.
+pub fn delete_vault(app_data_dir: &Path, vault_id: Uuid) -> AppResult<()> {
+    let vault_dir = find_vault_path(app_data_dir, vault_id)?;
+    if vault_dir.exists() {
+        fs::remove_dir_all(&vault_dir)?;
+    }
+    let mut index = load_index(app_data_dir)?;
+    index.retain(|e| e.id != vault_id);
+    save_index(app_data_dir, &index)
+}
+
+/// Renames a vault. Only the display name changes — the on-disk folder name
+/// and the TOTP secret (whose algorithm never depends on the account label)
+/// are unaffected.
+pub fn rename_vault(app_data_dir: &Path, vault_id: Uuid, new_name: &str) -> AppResult<()> {
+    let vault_dir = find_vault_path(app_data_dir, vault_id)?;
+    let mut metadata = load_metadata(&vault_dir)?;
+    metadata.name = new_name.to_string();
+    save_metadata(&vault_dir, &metadata)?;
+
+    let mut index = load_index(app_data_dir)?;
+    if let Some(entry) = index.iter_mut().find(|e| e.id == vault_id) {
+        entry.name = new_name.to_string();
+    }
+    save_index(app_data_dir, &index)
+}
+
+/// Rotates the master password: verifies `old_password`, then re-wraps the
+/// *existing* DEK under a freshly derived key with a new salt. Because files
+/// are encrypted with the DEK (not the password-derived key directly), this
+/// never touches the encrypted files themselves.
+pub fn change_master_password(
+    vault_dir: &Path,
+    old_password: &str,
+    new_password: &str,
+) -> AppResult<()> {
+    let (metadata, dek) = unlock(vault_dir, old_password)?;
+    let mut metadata = metadata;
+
+    let new_salt = crypto::random_salt();
+    let new_master_key = crypto::derive_key(new_password, &new_salt, &metadata.argon2_params)?;
+    metadata.salt = new_salt.to_vec();
+    metadata.dek_encrypted = crypto::encrypt(&new_master_key, &dek.0)?;
+    save_metadata(vault_dir, &metadata)
+}
+
 /// Derives the master key from the password and unwraps the DEK. Fails with
 /// `WrongPassword` if the password is incorrect (AES-GCM auth failure on the
 /// wrapped DEK).
@@ -182,7 +268,14 @@ pub fn unlock(vault_dir: &Path, password: &str) -> AppResult<(VaultMetadata, Vau
     let dek: [u8; crypto::KEY_LEN] = dek_bytes
         .try_into()
         .map_err(|_| AppError::Crypto("taille de cle invalide".into()))?;
-    Ok((metadata, VaultKey(dek)))
+    let dek = VaultKey(dek);
+
+    // Must run after the password is known to be correct (constant-time
+    // AEAD failure vs. tamper failure would otherwise leak which case
+    // occurred) and before the caller trusts `totp_enabled`.
+    verify_integrity(&metadata, &dek)?;
+
+    Ok((metadata, dek))
 }
 
 pub fn enable_totp(
@@ -194,6 +287,15 @@ pub fn enable_totp(
     let encrypted_secret = crypto::encrypt(dek, secret_base32.as_bytes())?;
     metadata.totp_enabled = true;
     metadata.totp_secret_encrypted = Some(encrypted_secret);
+    seal_integrity(&mut metadata, dek);
+    save_metadata(vault_dir, &metadata)
+}
+
+pub fn disable_totp(vault_dir: &Path, dek: &VaultKey) -> AppResult<()> {
+    let mut metadata = load_metadata(vault_dir)?;
+    metadata.totp_enabled = false;
+    metadata.totp_secret_encrypted = None;
+    seal_integrity(&mut metadata, dek);
     save_metadata(vault_dir, &metadata)
 }
 
@@ -249,15 +351,21 @@ pub fn remove_file(vault_dir: &Path, file_id: Uuid) -> AppResult<()> {
     save_metadata(vault_dir, &metadata)
 }
 
-/// Decrypts a vault file into `dest_dir` (normally a temp directory managed
-/// by the frontend/session, cleaned up on lock or app exit) and returns the
-/// path to the decrypted copy.
-pub fn export_file(
-    vault_dir: &Path,
-    dek: &VaultKey,
-    file_id: Uuid,
-    dest_dir: &Path,
-) -> AppResult<PathBuf> {
+/// Root of the OS temp directory under which decrypted exports live,
+/// namespaced per vault so `wipe_temp_exports` can clear just one vault's
+/// files (on lock) or the whole tree (on lock-all / app exit).
+fn temp_export_root(vault_id: Uuid) -> PathBuf {
+    std::env::temp_dir().join("securefolders-exports").join(vault_id.to_string())
+}
+
+/// Decrypts a vault file into a per-vault directory under the OS temp
+/// folder — never into a location the user picked — and returns the path to
+/// the decrypted copy. This copy is plaintext on disk by necessity (so the
+/// OS can open it with the associated application); [`wipe_temp_exports`]
+/// removes it again on lock, per the "never leave decrypted files around"
+/// requirement. See the README for the SSD/TRIM caveat on how irrecoverable
+/// that removal actually is.
+pub fn export_file(vault_dir: &Path, dek: &VaultKey, file_id: Uuid) -> AppResult<PathBuf> {
     let metadata = load_metadata(vault_dir)?;
     let entry = metadata
         .files
@@ -268,10 +376,31 @@ pub fn export_file(
     let ciphertext = fs::read(vault_dir.join(FILES_DIR).join(file_id.to_string()))?;
     let plaintext = crypto::decrypt(dek, &ciphertext)?;
 
-    fs::create_dir_all(dest_dir)?;
+    let dest_dir = temp_export_root(metadata.id);
+    fs::create_dir_all(&dest_dir)?;
     let dest_path = dest_dir.join(&entry.name);
     fs::write(&dest_path, plaintext)?;
     Ok(dest_path)
+}
+
+/// Best-effort cleanup of every decrypted export for a vault. Called on
+/// lock; failures are logged by the caller rather than propagated, since a
+/// lock action must always succeed from the user's point of view.
+pub fn wipe_temp_exports(vault_id: Uuid) -> std::io::Result<()> {
+    let dir = temp_export_root(vault_id);
+    if dir.exists() {
+        fs::remove_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+/// Wipes decrypted exports for every vault at once (used by `lock_all`).
+pub fn wipe_all_temp_exports() -> std::io::Result<()> {
+    let root = std::env::temp_dir().join("securefolders-exports");
+    if root.exists() {
+        fs::remove_dir_all(root)?;
+    }
+    Ok(())
 }
 
 fn sanitize_folder_name(name: &str) -> String {

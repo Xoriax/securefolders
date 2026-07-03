@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.2.0"
 description = "Coffres de fichiers chiffres localement (AES-256-GCM + Argon2id + TOTP)"
 authors = ["Xoriax"]
 license = "MIT"
@@ -24,12 +24,15 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 
 # Crypto
 aes-gcm = "0.10"
 argon2 = "0.5"
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
+hmac = "0.12"
+sha2 = "0.10"
 
 # TOTP / 2FA
 totp-rs = { version = "5", features = ["qr", "gen_secret"] }

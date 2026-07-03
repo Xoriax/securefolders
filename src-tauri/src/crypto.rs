@@ -1,10 +1,14 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
+use hmac::{Hmac, Mac};
 use rand::RngCore;
+use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::{AppError, AppResult};
+
+type HmacSha256 = Hmac<Sha256>;
 
 pub const SALT_LEN: usize = 16;
 pub const NONCE_LEN: usize = 12;
@@ -99,6 +103,25 @@ pub fn decrypt(key: &VaultKey, data: &[u8]) -> AppResult<Vec<u8>> {
     cipher
         .decrypt(nonce, ciphertext)
         .map_err(|_| AppError::WrongPassword)
+}
+
+/// Computes an HMAC-SHA256 tag over `message`, keyed by `key`. Used to bind
+/// security-critical metadata (e.g. whether 2FA is required) to the vault's
+/// DEK, so tampering with the metadata file outside the app is detectable
+/// instead of silently changing the app's behaviour.
+pub fn compute_mac(key: &VaultKey, message: &[u8]) -> Vec<u8> {
+    let mut mac =
+        <HmacSha256 as Mac>::new_from_slice(&key.0).expect("HMAC accepts a key of any size");
+    mac.update(message);
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// Verifies a tag produced by [`compute_mac`] in constant time.
+pub fn verify_mac(key: &VaultKey, message: &[u8], tag: &[u8]) -> bool {
+    let mut mac =
+        <HmacSha256 as Mac>::new_from_slice(&key.0).expect("HMAC accepts a key of any size");
+    mac.update(message);
+    mac.verify_slice(tag).is_ok()
 }
 
 /// Generates a fresh random Data Encryption Key (DEK). The DEK is what

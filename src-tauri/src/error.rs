@@ -14,6 +14,8 @@ pub enum AppError {
     InvalidTotpCode,
     #[error("Le 2FA n'est pas active pour ce coffre")]
     TotpNotEnabled,
+    #[error("Ce coffre semble avoir ete modifie en dehors de l'application. Ouverture refusee par securite.")]
+    VaultTampered,
     #[error("Fichier introuvable dans le coffre")]
     FileNotFound,
     #[error("Erreur d'entree/sortie: {0}")]
