@@ -44,29 +44,31 @@ src-tauri/src/
 
 ### Commandes Tauri disponibles
 
-`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `remove_file`, `export_file`, `is_vault_unlocked`.
+`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `remove_file`, `export_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`.
 
 ### Modèle de chiffrement
 
 1. À la création d'un coffre : génération d'un **salt** aléatoire (16 octets) et d'une **DEK** (Data Encryption Key) aléatoire de 256 bits.
 2. Le mot de passe maître + le salt sont passés dans **Argon2id** pour dériver une clé maître.
-3. La DEK est chiffrée avec la clé maître (AES-256-GCM) et stockée dans `vault.json` — jamais la clé maître elle-même.
+3. La DEK est chiffrée avec la clé maître (AES-256-GCM) et stockée dans `vault.json` — jamais la clé maître elle-même. Changer le mot de passe ne fait que re-envelopper la DEK sous une nouvelle clé maître : les fichiers ne sont jamais re-chiffrés.
 4. Chaque fichier ajouté est chiffré individuellement avec la DEK, avec un **nonce** aléatoire de 12 octets généré à chaque chiffrement.
 5. Le secret TOTP (si activé) est chiffré avec la DEK, jamais stocké en clair.
-6. Aucune clé n'est jamais écrite en clair sur le disque ; les clés déverrouillées ne vivent qu'en RAM et sont effacées (`zeroize`) à la fermeture de session.
+6. Un tag d'intégrité **HMAC-SHA256** (clé = DEK) protège les champs sensibles des métadonnées (`totp_enabled`, secret TOTP chiffré). Il est vérifié à chaque déverrouillage : toute modification de `vault.json` en dehors de l'application (par ex. désactiver le flag 2FA à la main pour le contourner) fait échouer le déverrouillage au lieu d'être silencieusement acceptée.
+7. Aucune clé n'est jamais écrite en clair sur le disque ; les clés déverrouillées ne vivent qu'en RAM et sont effacées (`zeroize`) à la fermeture de session.
+8. L'export d'un fichier le déchiffre dans un dossier temporaire géré par l'application (jamais un emplacement choisi par l'utilisateur), ouvert avec l'application par défaut du système. Ce dossier temporaire est supprimé automatiquement au verrouillage du coffre (ou de tous les coffres).
 
 ## Limites de sécurité connues
 
 - **Mot de passe perdu = données perdues.** Il n'existe aucune récupération possible, par conception.
 - L'auto-verrouillage (5 minutes d'inactivité) est actuellement une valeur fixe, pas encore configurable depuis l'interface.
-- L'export d'un fichier déchiffre une copie en clair sur le disque (dossier choisi par l'utilisateur) ; la suppression de cette copie temporaire n'est pas garantie irrécupérable sur SSD (limitation physique du TRIM/wear-leveling, pas propre à l'application).
-- Pas de codes de récupération TOTP : la perte du téléphone associé rend le coffre inaccessible même avec le bon mot de passe, tant que le 2FA n'a pas été désactivé au préalable (fonctionnalité à ajouter).
+- La suppression du dossier temporaire d'export au verrouillage n'est pas garantie irrécupérable sur SSD (limitation physique du TRIM/wear-leveling, pas propre à l'application).
+- Pas de codes de récupération TOTP : la perte du téléphone associé rend le coffre inaccessible même avec le bon mot de passe, tant que le 2FA n'a pas été désactivé au préalable depuis un appareil où il était déjà déverrouillé.
 - Le binaire n'est pas signé numériquement : Windows SmartScreen affichera un avertissement à l'installation si l'application est distribuée hors du Microsoft Store.
 
 ## Feuille de route
 
-- [ ] Suppression / renommage d'un coffre, changement du mot de passe maître, désactivation du 2FA
 - [ ] Codes de récupération TOTP
+- [ ] Rate-limit / délai croissant après échecs de mot de passe répétés
 - [ ] Chiffrement en streaming pour les gros fichiers
 - [ ] Timer d'auto-verrouillage configurable depuis les paramètres
 - [ ] Tests unitaires (crypto, vault, totp)
