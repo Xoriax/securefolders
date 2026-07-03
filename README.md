@@ -23,7 +23,21 @@ Prérequis :
 ```bash
 npm install
 npm run tauri dev     # lancer en mode développement
-npm run tauri build   # générer l'installeur .msi/.exe
+npm run tauri build   # générer les installeurs .exe et .msi
+cd src-tauri && cargo test   # lancer les tests unitaires du backend
+```
+
+## Téléchargement
+
+Chaque tag `vX.Y.Z` publie une [release GitHub](https://github.com/Xoriax/securefolders/releases) avec deux installeurs Windows x64 :
+
+- **`SecureFolders_X.Y.Z_x64-setup.exe` (recommandé)** — installeur NSIS, s'installe pour l'utilisateur courant dans `%LOCALAPPDATA%`, **sans droits administrateur**.
+- **`SecureFolders_X.Y.Z_x64_en-US.msi`** — installeur MSI/WiX, toujours "par machine" (le bundler Tauri ne propose pas de variante par utilisateur pour le MSI) : nécessite des droits administrateur. À réserver aux déploiements gérés par une équipe IT (GPO, SCCM, etc.) ; pour un usage personnel, préférer le `.exe`.
+
+Vérifiez l'intégrité du fichier téléchargé en comparant son empreinte SHA-256 avec celle publiée sur la page de la release (le binaire n'étant pas signé numériquement, c'est le seul moyen de confirmer qu'il n'a pas été altéré) :
+
+```powershell
+Get-FileHash .\SecureFolders_X.Y.Z_x64-setup.exe -Algorithm SHA256
 ```
 
 ## Architecture
@@ -71,8 +85,9 @@ src-tauri/src/
 - [ ] Rate-limit / délai croissant après échecs de mot de passe répétés
 - [ ] Chiffrement en streaming pour les gros fichiers
 - [ ] Timer d'auto-verrouillage configurable depuis les paramètres
-- [ ] Tests unitaires (crypto, vault, totp)
 - [ ] Icônes et identité visuelle propres au projet
+- [ ] Signature de code (certificat) pour supprimer l'avertissement SmartScreen
+- [ ] Site vitrine avec page de téléchargement
 
 Voir les [issues](https://github.com/Xoriax/securefolders/issues) pour le détail et l'avancement.
 

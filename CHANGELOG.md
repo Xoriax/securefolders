@@ -4,6 +4,12 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.4.0] - 2026-07-03
+
+### Ajoute
+- Suite de 25 tests unitaires Rust (crypto, totp, vault), executee en CI a chaque push. Inclut deux tests de regression pour la faille corrigee en 0.2.0 (contournement de la 2FA par modification de `vault.json`).
+- Documentation du choix d'installeur dans le README : `.exe` (NSIS, sans droits admin, recommande) vs `.msi` (WiX, toujours par machine, reserve aux deploiements geres) — decouvert en verifiant concretement les artefacts publies par la release v0.3.0, dont l'installation `.msi` silencieuse echouait sans elevation.
+
 ## [0.3.0] - 2026-07-03
 
 ### Ajoute
