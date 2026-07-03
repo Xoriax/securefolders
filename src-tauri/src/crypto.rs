@@ -169,3 +169,116 @@ pub fn random_dek() -> VaultKey {
     rand::rngs::OsRng.fill_bytes(&mut key);
     VaultKey(key)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Minimal but valid Argon2id parameters, only for tests that need
+    // determinism/speed rather than real security margins.
+    fn fast_params() -> Argon2Params {
+        Argon2Params { memory_kib: 8, iterations: 1, parallelism: 1 }
+    }
+
+    #[test]
+    fn derive_key_is_deterministic_for_same_input() {
+        let salt = random_salt();
+        let params = fast_params();
+        let k1 = derive_key("correct horse battery staple", &salt, &params).unwrap();
+        let k2 = derive_key("correct horse battery staple", &salt, &params).unwrap();
+        assert_eq!(k1.0, k2.0);
+    }
+
+    #[test]
+    fn derive_key_differs_for_different_passwords() {
+        let salt = random_salt();
+        let params = fast_params();
+        let k1 = derive_key("password one", &salt, &params).unwrap();
+        let k2 = derive_key("password two", &salt, &params).unwrap();
+        assert_ne!(k1.0, k2.0);
+    }
+
+    #[test]
+    fn derive_key_differs_for_different_salts() {
+        let params = fast_params();
+        let k1 = derive_key("same password", &random_salt(), &params).unwrap();
+        let k2 = derive_key("same password", &random_salt(), &params).unwrap();
+        assert_ne!(k1.0, k2.0);
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let key = random_dek();
+        let plaintext = b"les fichiers secrets";
+        let ciphertext = encrypt(&key, plaintext).unwrap();
+        assert_ne!(ciphertext.as_slice(), plaintext.as_slice());
+        assert_eq!(decrypt(&key, &ciphertext).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn encrypt_uses_a_fresh_nonce_each_call() {
+        let key = random_dek();
+        let plaintext = b"same message every time";
+        let c1 = encrypt(&key, plaintext).unwrap();
+        let c2 = encrypt(&key, plaintext).unwrap();
+        // Same plaintext, same key, but different random nonces must produce
+        // different ciphertext — a repeated nonce under AES-GCM is catastrophic.
+        assert_ne!(c1, c2);
+    }
+
+    #[test]
+    fn decrypt_fails_with_wrong_key() {
+        let ciphertext = encrypt(&random_dek(), b"data").unwrap();
+        let wrong_key = random_dek();
+        assert!(matches!(decrypt(&wrong_key, &ciphertext), Err(AppError::WrongPassword)));
+    }
+
+    #[test]
+    fn decrypt_fails_when_ciphertext_is_tampered() {
+        let key = random_dek();
+        let mut ciphertext = encrypt(&key, b"integrity matters").unwrap();
+        let last = ciphertext.len() - 1;
+        ciphertext[last] ^= 0xFF;
+        assert!(decrypt(&key, &ciphertext).is_err());
+    }
+
+    #[test]
+    fn mac_roundtrip_succeeds_and_detects_tampering() {
+        let key = random_dek();
+        let message = b"totp_enabled=true";
+        let tag = compute_mac(&key, message);
+
+        assert!(verify_mac(&key, message, &tag));
+        assert!(!verify_mac(&key, b"totp_enabled=false", &tag));
+
+        let other_key = random_dek();
+        assert!(!verify_mac(&other_key, message, &tag));
+    }
+
+    #[test]
+    fn recovery_code_hash_ignores_case_dashes_and_whitespace() {
+        let code = generate_recovery_code();
+        let hash = hash_recovery_code(&code);
+        let messy = format!(" {} ", code.to_lowercase().replace('-', " - "));
+        assert_eq!(hash, hash_recovery_code(&messy));
+    }
+
+    #[test]
+    fn recovery_code_has_expected_shape() {
+        let code = generate_recovery_code();
+        let groups: Vec<&str> = code.split('-').collect();
+        assert_eq!(groups.len(), RECOVERY_CODE_GROUPS);
+        for group in groups {
+            assert_eq!(group.len(), RECOVERY_CODE_GROUP_LEN);
+            assert!(group.bytes().all(|b| RECOVERY_CODE_ALPHABET.contains(&b)));
+        }
+    }
+
+    #[test]
+    fn recovery_codes_are_not_all_identical() {
+        // Sanity check that generation is actually randomized, not a fixed string.
+        let codes: std::collections::HashSet<String> =
+            (0..20).map(|_| generate_recovery_code()).collect();
+        assert!(codes.len() > 1);
+    }
+}

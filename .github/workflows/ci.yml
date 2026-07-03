@@ -35,3 +35,7 @@ jobs:
       - name: Check Rust backend
         working-directory: src-tauri
         run: cargo check --locked
+
+      - name: Run Rust test suite
+        working-directory: src-tauri
+        run: cargo test --locked

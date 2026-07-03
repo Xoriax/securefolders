@@ -49,3 +49,44 @@ pub fn verify_code(secret_base32: &str, code: &str, vault_name: &str) -> AppResu
     totp.check_current(code)
         .map_err(|e| AppError::Crypto(e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_code_accepts_the_current_valid_code() {
+        let secret = generate_secret_base32();
+        let totp = build_totp(&secret, "test-vault").unwrap();
+        let code = totp.generate_current().unwrap();
+        assert!(verify_code(&secret, &code, "test-vault").unwrap());
+    }
+
+    #[test]
+    fn verify_code_rejects_an_incorrect_code() {
+        let secret = generate_secret_base32();
+        let totp = build_totp(&secret, "test-vault").unwrap();
+        let valid = totp.generate_current().unwrap();
+        // Flip the leading digit so it can never coincide with the real code.
+        let mut wrong: Vec<u8> = valid.into_bytes();
+        wrong[0] = if wrong[0] == b'0' { b'1' } else { b'0' };
+        let wrong = String::from_utf8(wrong).unwrap();
+        assert!(!verify_code(&secret, &wrong, "test-vault").unwrap());
+    }
+
+    #[test]
+    fn a_code_generated_for_one_secret_does_not_validate_against_another() {
+        let secret_a = generate_secret_base32();
+        let secret_b = generate_secret_base32();
+        let code_a = build_totp(&secret_a, "vault").unwrap().generate_current().unwrap();
+        assert!(!verify_code(&secret_b, &code_a, "vault").unwrap());
+    }
+
+    #[test]
+    fn qr_code_data_url_is_a_png_data_url() {
+        let secret = generate_secret_base32();
+        let url = qr_code_data_url(&secret, "test-vault").unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+        assert!(url.len() > "data:image/png;base64,".len());
+    }
+}

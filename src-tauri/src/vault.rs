@@ -483,3 +483,204 @@ fn sanitize_folder_name(name: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::*;
+
+    /// Fresh, isolated `(app_data_dir, location)` pair for a test. The
+    /// returned `TempDir` must stay in scope for the test's duration — its
+    /// `Drop` impl deletes the directory tree.
+    fn fresh_dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let app_data_dir = root.path().join("appdata");
+        let location = root.path().join("vaults");
+        fs::create_dir_all(&app_data_dir).unwrap();
+        fs::create_dir_all(&location).unwrap();
+        (root, app_data_dir, location)
+    }
+
+    #[test]
+    fn create_and_unlock_vault_succeeds_with_correct_password() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (metadata, vault_dir) =
+            create_vault(&app_data_dir, "Mon Coffre", &location, "correct horse battery").unwrap();
+        assert_eq!(metadata.name, "Mon Coffre");
+        assert!(!metadata.totp_enabled);
+
+        let (unlocked, _dek) = unlock(&vault_dir, "correct horse battery").unwrap();
+        assert_eq!(unlocked.id, metadata.id);
+    }
+
+    #[test]
+    fn unlock_fails_with_wrong_password() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Coffre", &location, "le bon mot de passe").unwrap();
+        let result = unlock(&vault_dir, "un mauvais mot de passe");
+        assert!(matches!(result, Err(AppError::WrongPassword)));
+    }
+
+    #[test]
+    fn create_vault_fails_if_folder_already_exists() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        create_vault(&app_data_dir, "Doublon", &location, "password123").unwrap();
+        let result = create_vault(&app_data_dir, "Doublon", &location, "password123");
+        assert!(matches!(result, Err(AppError::VaultAlreadyExists)));
+    }
+
+    #[test]
+    fn enable_totp_generates_recovery_codes_usable_exactly_once() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "2FA", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let codes = enable_totp(&vault_dir, &dek, "JBSWY3DPEHPK3PXP").unwrap();
+        assert_eq!(codes.len(), RECOVERY_CODE_COUNT);
+
+        // First use succeeds...
+        consume_recovery_code(&vault_dir, &dek, &codes[0]).unwrap();
+        // ...but replaying the same code is rejected...
+        assert!(matches!(
+            consume_recovery_code(&vault_dir, &dek, &codes[0]),
+            Err(AppError::InvalidRecoveryCode)
+        ));
+        // ...and an unrelated code was never valid to begin with.
+        assert!(matches!(
+            consume_recovery_code(&vault_dir, &dek, "ZZZZ-ZZZZ-ZZZZ-ZZZZ"),
+            Err(AppError::InvalidRecoveryCode)
+        ));
+        // A different, still-unused code from the same batch still works.
+        consume_recovery_code(&vault_dir, &dek, &codes[1]).unwrap();
+    }
+
+    #[test]
+    fn disable_totp_clears_secret_and_recovery_codes() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "ToggleTwoFa", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+        enable_totp(&vault_dir, &dek, "JBSWY3DPEHPK3PXP").unwrap();
+
+        disable_totp(&vault_dir, &dek).unwrap();
+
+        let metadata = load_metadata(&vault_dir).unwrap();
+        assert!(!metadata.totp_enabled);
+        assert!(metadata.totp_secret_encrypted.is_none());
+        assert!(metadata.recovery_codes.is_empty());
+    }
+
+    /// Regression test for the fix in v0.2.0: an attacker with brief write
+    /// access to the vault folder used to be able to flip `totp_enabled` to
+    /// `false` in vault.json and unlock with the password alone, completely
+    /// bypassing 2FA. The integrity tag must catch this.
+    #[test]
+    fn unlock_rejects_a_vault_json_tampered_to_disable_totp() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Tamper", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+        enable_totp(&vault_dir, &dek, "JBSWY3DPEHPK3PXP").unwrap();
+
+        // Simulate an attacker editing vault.json directly, without knowing
+        // the DEK needed to reseal the integrity tag.
+        let mut tampered = load_metadata(&vault_dir).unwrap();
+        assert!(tampered.totp_enabled);
+        tampered.totp_enabled = false;
+        save_metadata(&vault_dir, &tampered).unwrap();
+
+        let result = unlock(&vault_dir, "password123");
+        assert!(matches!(result, Err(AppError::VaultTampered)));
+    }
+
+    /// Same attack, but injecting a recovery code hash the attacker chose
+    /// themselves instead of disabling 2FA outright.
+    #[test]
+    fn unlock_rejects_a_vault_json_with_an_injected_recovery_code() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Inject", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+        enable_totp(&vault_dir, &dek, "JBSWY3DPEHPK3PXP").unwrap();
+
+        let mut tampered = load_metadata(&vault_dir).unwrap();
+        tampered.recovery_codes.push(RecoveryCode {
+            hash: crypto::hash_recovery_code("ATTACKER-KNOWN-CODE"),
+            used: false,
+        });
+        save_metadata(&vault_dir, &tampered).unwrap();
+
+        assert!(matches!(unlock(&vault_dir, "password123"), Err(AppError::VaultTampered)));
+    }
+
+    #[test]
+    fn change_master_password_rotates_access_without_touching_files() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (metadata, vault_dir) =
+            create_vault(&app_data_dir, "Rotate", &location, "old-password-123").unwrap();
+        let (_metadata, dek_before) = unlock(&vault_dir, "old-password-123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"contenu secret").unwrap();
+        let entry = add_file(&vault_dir, &dek_before, source.path()).unwrap();
+
+        change_master_password(&vault_dir, "old-password-123", "new-password-456").unwrap();
+
+        assert!(matches!(
+            unlock(&vault_dir, "old-password-123"),
+            Err(AppError::WrongPassword)
+        ));
+        let (_metadata, dek_after) = unlock(&vault_dir, "new-password-456").unwrap();
+
+        // The DEK — and therefore every file encrypted with it — survives
+        // the rotation untouched; only its wrapping changed.
+        let exported = export_file(&vault_dir, &dek_after, entry.id).unwrap();
+        assert_eq!(fs::read(&exported).unwrap(), b"contenu secret");
+        let _ = wipe_temp_exports(metadata.id);
+    }
+
+    #[test]
+    fn rename_and_delete_vault_updates_index_and_disk() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (metadata, vault_dir) =
+            create_vault(&app_data_dir, "Avant", &location, "password123").unwrap();
+
+        rename_vault(&app_data_dir, metadata.id, "Apres").unwrap();
+        let summaries = list_vaults(&app_data_dir).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].name, "Apres");
+
+        delete_vault(&app_data_dir, metadata.id).unwrap();
+        assert!(!vault_dir.exists());
+        assert!(list_vaults(&app_data_dir).unwrap().is_empty());
+        assert!(matches!(
+            find_vault_path(&app_data_dir, metadata.id),
+            Err(AppError::VaultNotFound)
+        ));
+    }
+
+    #[test]
+    fn add_export_and_remove_file_round_trip() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (metadata, vault_dir) =
+            create_vault(&app_data_dir, "Fichiers", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"hello vault").unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path()).unwrap();
+
+        let exported = export_file(&vault_dir, &dek, entry.id).unwrap();
+        assert_eq!(fs::read(&exported).unwrap(), b"hello vault");
+        let _ = wipe_temp_exports(metadata.id);
+
+        remove_file(&vault_dir, entry.id).unwrap();
+        assert!(matches!(
+            export_file(&vault_dir, &dek, entry.id),
+            Err(AppError::FileNotFound)
+        ));
+    }
+}
