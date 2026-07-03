@@ -4,6 +4,16 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.6.0] - 2026-07-04
+
+### Ajoute
+- Chiffrement/dechiffrement de fichiers en streaming (construction STREAM d'AES-256-GCM, blocs de 64 Kio) : plus aucun fichier n'est charge entierement en RAM, quelle que soit sa taille. Valide manuellement avec un fichier de 50 Mo et par des tests unitaires couvrant les cas limites (fichier vide, plus petit qu'un bloc, exactement un bloc, plusieurs blocs, bloc supprime/reordonne).
+- Barre de progression en temps reel sur l'ajout et l'export de fichiers, via des evenements Tauri emis au maximum toutes les 100ms.
+- Apercu integre des fichiers (images et texte) sans avoir a les exporter, limite a 20 Mo. Les images sont servies via le protocole `asset://` de Tauri (pas de data URL base64, plus robuste et evite de gonfler le payload IPC).
+
+### Corrige
+- Fenetre CSP trop stricte empechant initialement l'affichage des apercus image (contourne par le passage a `asset://` plutot que de relacher la CSP).
+
 ## [0.5.0] - 2026-07-03
 
 ### Ajoute
