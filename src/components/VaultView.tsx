@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { api, errorMessage } from "../api";
 import type { FileEntry, VaultSummary } from "../types";
 import { TotpSetupModal } from "./TotpSetupModal";
+import { VaultSettingsModal } from "./VaultSettingsModal";
 
 interface Props {
   vault: VaultSummary;
   onLocked: () => void;
+  onDeleted: () => void;
   onVaultUpdated: (vault: VaultSummary) => void;
 }
 
@@ -17,11 +19,12 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
-export function VaultView({ vault, onLocked, onVaultUpdated }: Props) {
+export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showTotpSetup, setShowTotpSetup] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(() => {
     api
@@ -33,6 +36,17 @@ export function VaultView({ vault, onLocked, onVaultUpdated }: Props) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The vault auto-locks after inactivity even if the user never touches
+  // this screen; poll so the UI notices and drops back to the unlock screen
+  // instead of showing a "vault" view backed by a session that no longer exists.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const unlocked = await api.isVaultUnlocked(vault.id).catch(() => true);
+      if (!unlocked) onLocked();
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [vault.id, onLocked]);
 
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent(async (event) => {
@@ -72,10 +86,12 @@ export function VaultView({ vault, onLocked, onVaultUpdated }: Props) {
   }
 
   async function handleExport(fileId: string) {
-    const destDir = await open({ directory: true, multiple: false });
-    if (typeof destDir !== "string") return;
+    setError(null);
     try {
-      await api.exportFile(vault.id, fileId, destDir);
+      // Decrypted into an app-managed temp folder (never a user-chosen
+      // permanent location) and wiped again when the vault is locked.
+      const path = await api.exportFile(vault.id, fileId);
+      await openPath(path);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -96,6 +112,9 @@ export function VaultView({ vault, onLocked, onVaultUpdated }: Props) {
               Activer la 2FA
             </button>
           )}
+          <button className="btn" onClick={() => setShowSettings(true)}>
+            Parametres
+          </button>
           <button className="btn" onClick={handleLock}>
             Verrouiller
           </button>
@@ -136,6 +155,16 @@ export function VaultView({ vault, onLocked, onVaultUpdated }: Props) {
             setShowTotpSetup(false);
             onVaultUpdated({ ...vault, totpEnabled: true });
           }}
+        />
+      )}
+
+      {showSettings && (
+        <VaultSettingsModal
+          vault={vault}
+          onClose={() => setShowSettings(false)}
+          onRenamed={(newName) => onVaultUpdated({ ...vault, name: newName })}
+          onTotpDisabled={() => onVaultUpdated({ ...vault, totpEnabled: false })}
+          onDeleted={onDeleted}
         />
       )}
     </div>

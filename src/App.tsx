@@ -81,6 +81,7 @@ function App() {
           <VaultView
             vault={view.vault}
             onLocked={backToList}
+            onDeleted={backToList}
             onVaultUpdated={(updated) =>
               setView({ kind: "vault", vault: updated })
             }

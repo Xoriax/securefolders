@@ -32,11 +32,21 @@ export const api = {
   removeFile: (vaultId: string, fileId: string) =>
     invoke<void>("remove_file", { vaultId, fileId }),
 
-  exportFile: (vaultId: string, fileId: string, destDir: string) =>
-    invoke<string>("export_file", { vaultId, fileId, destDir }),
+  exportFile: (vaultId: string, fileId: string) =>
+    invoke<string>("export_file", { vaultId, fileId }),
 
   isVaultUnlocked: (vaultId: string) =>
     invoke<boolean>("is_vault_unlocked", { vaultId }),
+
+  deleteVault: (vaultId: string) => invoke<void>("delete_vault", { vaultId }),
+
+  renameVault: (vaultId: string, newName: string) =>
+    invoke<void>("rename_vault", { vaultId, newName }),
+
+  changeMasterPassword: (vaultId: string, oldPassword: string, newPassword: string) =>
+    invoke<void>("change_master_password", { vaultId, oldPassword, newPassword }),
+
+  disableTotp: (vaultId: string) => invoke<void>("disable_totp", { vaultId }),
 };
 
 export function errorMessage(err: unknown): string {
