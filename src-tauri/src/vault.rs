@@ -380,7 +380,15 @@ pub fn decrypt_totp_secret(metadata: &VaultMetadata, dek: &VaultKey) -> AppResul
     String::from_utf8(bytes).map_err(|e| AppError::Crypto(e.to_string()))
 }
 
-pub fn add_file(vault_dir: &Path, dek: &VaultKey, source_path: &Path) -> AppResult<FileEntry> {
+/// Encrypts `source_path` into the vault in fixed-size chunks (see
+/// `crypto::encrypt_file`) rather than reading it into memory whole, so
+/// adding a very large file can't exhaust RAM or crash the app.
+pub fn add_file(
+    vault_dir: &Path,
+    dek: &VaultKey,
+    source_path: &Path,
+    on_progress: impl FnMut(u64, u64),
+) -> AppResult<FileEntry> {
     let mut metadata = load_metadata(vault_dir)?;
 
     let name = source_path
@@ -388,13 +396,11 @@ pub fn add_file(vault_dir: &Path, dek: &VaultKey, source_path: &Path) -> AppResu
         .and_then(|n| n.to_str())
         .ok_or_else(|| AppError::Crypto("nom de fichier invalide".into()))?
         .to_string();
-    let plaintext = fs::read(source_path)?;
-    let size = plaintext.len() as u64;
-
-    let ciphertext = crypto::encrypt(dek, &plaintext)?;
+    let size = fs::metadata(source_path)?.len();
 
     let file_id = Uuid::new_v4();
-    fs::write(vault_dir.join(FILES_DIR).join(file_id.to_string()), ciphertext)?;
+    let dest_path = vault_dir.join(FILES_DIR).join(file_id.to_string());
+    crypto::encrypt_file(dek, source_path, &dest_path, on_progress)?;
 
     let entry = FileEntry {
         id: file_id,
@@ -437,7 +443,12 @@ fn temp_export_root(vault_id: Uuid) -> PathBuf {
 /// removes it again on lock, per the "never leave decrypted files around"
 /// requirement. See the README for the SSD/TRIM caveat on how irrecoverable
 /// that removal actually is.
-pub fn export_file(vault_dir: &Path, dek: &VaultKey, file_id: Uuid) -> AppResult<PathBuf> {
+pub fn export_file(
+    vault_dir: &Path,
+    dek: &VaultKey,
+    file_id: Uuid,
+    on_progress: impl FnMut(u64, u64),
+) -> AppResult<PathBuf> {
     let metadata = load_metadata(vault_dir)?;
     let entry = metadata
         .files
@@ -445,13 +456,15 @@ pub fn export_file(vault_dir: &Path, dek: &VaultKey, file_id: Uuid) -> AppResult
         .find(|f| f.id == file_id)
         .ok_or(AppError::FileNotFound)?;
 
-    let ciphertext = fs::read(vault_dir.join(FILES_DIR).join(file_id.to_string()))?;
-    let plaintext = crypto::decrypt(dek, &ciphertext)?;
-
     let dest_dir = temp_export_root(metadata.id);
     fs::create_dir_all(&dest_dir)?;
     let dest_path = dest_dir.join(&entry.name);
-    fs::write(&dest_path, plaintext)?;
+    crypto::decrypt_file(
+        dek,
+        &vault_dir.join(FILES_DIR).join(file_id.to_string()),
+        &dest_path,
+        on_progress,
+    )?;
     Ok(dest_path)
 }
 
@@ -625,7 +638,7 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"contenu secret").unwrap();
-        let entry = add_file(&vault_dir, &dek_before, source.path()).unwrap();
+        let entry = add_file(&vault_dir, &dek_before, source.path(), |_, _| {}).unwrap();
 
         change_master_password(&vault_dir, "old-password-123", "new-password-456").unwrap();
 
@@ -637,7 +650,7 @@ mod tests {
 
         // The DEK — and therefore every file encrypted with it — survives
         // the rotation untouched; only its wrapping changed.
-        let exported = export_file(&vault_dir, &dek_after, entry.id).unwrap();
+        let exported = export_file(&vault_dir, &dek_after, entry.id, |_, _| {}).unwrap();
         assert_eq!(fs::read(&exported).unwrap(), b"contenu secret");
         let _ = wipe_temp_exports(metadata.id);
     }
@@ -671,15 +684,15 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"hello vault").unwrap();
-        let entry = add_file(&vault_dir, &dek, source.path()).unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
 
-        let exported = export_file(&vault_dir, &dek, entry.id).unwrap();
+        let exported = export_file(&vault_dir, &dek, entry.id, |_, _| {}).unwrap();
         assert_eq!(fs::read(&exported).unwrap(), b"hello vault");
         let _ = wipe_temp_exports(metadata.id);
 
         remove_file(&vault_dir, entry.id).unwrap();
         assert!(matches!(
-            export_file(&vault_dir, &dek, entry.id),
+            export_file(&vault_dir, &dek, entry.id, |_, _| {}),
             Err(AppError::FileNotFound)
         ));
     }
