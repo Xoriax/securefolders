@@ -85,7 +85,6 @@ src-tauri/src/
 - [ ] Rate-limit / délai croissant après échecs de mot de passe répétés
 - [ ] Chiffrement en streaming pour les gros fichiers
 - [ ] Timer d'auto-verrouillage configurable depuis les paramètres
-- [ ] Icônes et identité visuelle propres au projet
 - [ ] Signature de code (certificat) pour supprimer l'avertissement SmartScreen
 - [ ] Site vitrine avec page de téléchargement
 

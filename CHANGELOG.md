@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.5.0] - 2026-07-03
+
+### Ajoute
+- Identite visuelle du projet : logo dossier + cadenas, fond anthracite et liseres or, genere avec Canva puis nettoye (suppression de la marge du canevas, mise en transparence). Remplace les icones par defaut de Tauri pour toutes les plateformes/formats (ICO, ICNS, PNG, Appx) ainsi que le favicon de l'interface web.
+
 ## [0.4.0] - 2026-07-03
 
 ### Ajoute
