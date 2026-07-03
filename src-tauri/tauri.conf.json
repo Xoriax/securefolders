@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SecureFolders",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "identifier": "com.securefolders.app",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +22,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$TEMP/securefolders-exports/**"]
+      }
     }
   },
   "bundle": {

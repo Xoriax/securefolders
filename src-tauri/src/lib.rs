@@ -38,6 +38,7 @@ pub fn run() {
             commands::add_file,
             commands::remove_file,
             commands::export_file,
+            commands::preview_file,
             commands::is_vault_unlocked,
             commands::delete_vault,
             commands::rename_vault,

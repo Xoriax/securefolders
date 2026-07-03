@@ -1,12 +1,20 @@
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::{totp, vault};
+
+/// How often (at most) a file transfer emits a progress event to the
+/// frontend. Chunk-by-chunk would be hundreds of IPC messages per second on
+/// a fast disk for no visible UI benefit; this throttles it to something a
+/// progress bar can actually use.
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+const TRANSFER_PROGRESS_EVENT: &str = "vault://transfer-progress";
 
 fn app_data_dir(app: &AppHandle) -> AppResult<PathBuf> {
     app.path()
@@ -33,6 +41,91 @@ pub struct ConfirmTotpResult {
     /// Shown to the user exactly once — the app never stores or displays
     /// these again after this response.
     pub recovery_codes: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TransferProgress {
+    vault_id: Uuid,
+    file_name: String,
+    direction: &'static str,
+    bytes_done: u64,
+    bytes_total: u64,
+}
+
+/// Builds a throttled progress callback: forwards to the Tauri event system
+/// at most every `PROGRESS_EMIT_INTERVAL`, but always on the final call
+/// (`bytes_done == bytes_total`) so the UI reliably reaches 100%.
+fn progress_emitter<'a>(
+    app: &'a AppHandle,
+    vault_id: Uuid,
+    file_name: String,
+    direction: &'static str,
+) -> impl FnMut(u64, u64) + 'a {
+    let mut last_emit = Instant::now() - PROGRESS_EMIT_INTERVAL;
+    move |bytes_done: u64, bytes_total: u64| {
+        let now = Instant::now();
+        if bytes_done == bytes_total || now.duration_since(last_emit) >= PROGRESS_EMIT_INTERVAL {
+            last_emit = now;
+            let _ = app.emit(
+                TRANSFER_PROGRESS_EVENT,
+                TransferProgress {
+                    vault_id,
+                    file_name: file_name.clone(),
+                    direction,
+                    bytes_done,
+                    bytes_total,
+                },
+            );
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FilePreview {
+    /// Path to the decrypted temp copy; the frontend loads it via Tauri's
+    /// `convertFileSrc`/asset protocol rather than a base64 data URL, so
+    /// large images don't have to be inflated ~33% and shipped whole over
+    /// the IPC bridge as a command return value.
+    Image { path: String },
+    Text { content: String, truncated: bool },
+    TooLarge,
+    Unsupported,
+}
+
+/// Files above this size are never decrypted just for a preview — export
+/// them instead. Keeps `preview_file` fast and bounds the memory it uses
+/// (the whole point of streaming file encryption elsewhere in this app).
+const PREVIEW_MAX_BYTES: u64 = 20 * 1024 * 1024;
+const PREVIEW_TEXT_MAX_CHARS: usize = 50_000;
+
+fn preview_extension(name: &str) -> String {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+fn image_mime_type(ext: &str) -> Option<&'static str> {
+    Some(match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => return None,
+    })
+}
+
+fn is_text_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "txt" | "md" | "markdown" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "toml"
+            | "ini" | "conf" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "html" | "css" | "sh"
+    )
 }
 
 #[tauri::command]
@@ -212,7 +305,15 @@ pub fn add_file(
 ) -> AppResult<vault::FileEntry> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    vault::add_file(&vault_dir, &dek, &PathBuf::from(source_path))
+    let source_path = PathBuf::from(source_path);
+    let file_name = source_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let on_progress = progress_emitter(&app, vault_id, file_name, "import");
+    vault::add_file(&vault_dir, &dek, &source_path, on_progress)
 }
 
 #[tauri::command]
@@ -241,8 +342,60 @@ pub fn export_file(
 ) -> AppResult<String> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    let path = vault::export_file(&vault_dir, &dek, file_id)?;
+    let file_name = vault::load_metadata(&vault_dir)?
+        .files
+        .into_iter()
+        .find(|f| f.id == file_id)
+        .map(|f| f.name)
+        .unwrap_or_default();
+
+    let on_progress = progress_emitter(&app, vault_id, file_name, "export");
+    let path = vault::export_file(&vault_dir, &dek, file_id, on_progress)?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Decrypts a small file fully into memory to render an inline preview
+/// (image or text) without exporting it. Anything larger than
+/// `PREVIEW_MAX_BYTES`, or of an unrecognized type, returns a variant the
+/// frontend renders as "export it instead" rather than being decrypted at
+/// all.
+#[tauri::command]
+pub fn preview_file(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    file_id: Uuid,
+) -> AppResult<FilePreview> {
+    let dek = state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    let metadata = vault::load_metadata(&vault_dir)?;
+    let entry = metadata
+        .files
+        .iter()
+        .find(|f| f.id == file_id)
+        .ok_or(AppError::FileNotFound)?;
+
+    if entry.size > PREVIEW_MAX_BYTES {
+        return Ok(FilePreview::TooLarge);
+    }
+
+    let ext = preview_extension(&entry.name);
+    let is_image = image_mime_type(&ext).is_some();
+    if !is_image && !is_text_extension(&ext) {
+        return Ok(FilePreview::Unsupported);
+    }
+
+    let exported_path = vault::export_file(&vault_dir, &dek, file_id, |_, _| {})?;
+
+    if is_image {
+        return Ok(FilePreview::Image { path: exported_path.to_string_lossy().to_string() });
+    }
+
+    let bytes = std::fs::read(&exported_path)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let truncated = text.chars().count() > PREVIEW_TEXT_MAX_CHARS;
+    let content: String = text.chars().take(PREVIEW_TEXT_MAX_CHARS).collect();
+    Ok(FilePreview::Text { content, truncated })
 }
 
 #[tauri::command]
