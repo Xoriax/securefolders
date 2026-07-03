@@ -4,6 +4,14 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.3.0] - 2026-07-03
+
+### Ajoute
+- Codes de recuperation TOTP a usage unique : 10 codes generes et affiches une seule fois a l'activation de la 2FA, permettant de deverrouiller un coffre avec le mot de passe seul si l'application d'authentification est perdue. Seuls leurs hashs SHA-256 sont stockes, integres au tag d'integrite HMAC du coffre pour empecher qu'un attaquant en injecte un a lui.
+- Ecran de deverrouillage : lien "Application d'authentification perdue ?" basculant vers la saisie d'un code de recuperation a la place du code TOTP.
+- Parametres du coffre : bouton "Regenerer les codes de recuperation" (invalide l'ancien lot, en emet un nouveau).
+- La desactivation de la 2FA efface egalement les codes de recuperation restants.
+
 ## [0.2.0] - 2026-07-03
 
 ### Corrige (securite)
