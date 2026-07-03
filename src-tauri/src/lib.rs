@@ -28,6 +28,8 @@ pub fn run() {
             commands::create_vault,
             commands::unlock_vault,
             commands::verify_totp,
+            commands::unlock_with_recovery_code,
+            commands::regenerate_recovery_codes,
             commands::lock_vault,
             commands::lock_all_vaults,
             commands::setup_totp,

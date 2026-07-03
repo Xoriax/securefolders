@@ -27,6 +27,14 @@ pub struct TotpSetup {
     pub qr_code_data_url: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmTotpResult {
+    /// Shown to the user exactly once — the app never stores or displays
+    /// these again after this response.
+    pub recovery_codes: Vec<String>,
+}
+
 #[tauri::command]
 pub fn list_vaults(app: AppHandle) -> AppResult<Vec<vault::VaultSummary>> {
     vault::list_vaults(&app_data_dir(&app)?)
@@ -100,6 +108,22 @@ pub fn verify_totp(
     state.complete_totp_unlock(vault_id)
 }
 
+/// Fallback for `verify_totp` when the user has lost their authenticator
+/// device: completes login with a single-use recovery code instead of a
+/// TOTP code, generated when 2FA was enabled.
+#[tauri::command]
+pub fn unlock_with_recovery_code(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    code: String,
+) -> AppResult<()> {
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    let dek = state.peek_pending_totp_unlock(vault_id)?;
+    vault::consume_recovery_code(&vault_dir, &dek, &code)?;
+    state.complete_totp_unlock(vault_id)
+}
+
 #[tauri::command]
 pub fn lock_vault(state: State<AppState>, vault_id: Uuid) {
     state.lock_vault(vault_id);
@@ -143,7 +167,7 @@ pub fn confirm_totp(
     state: State<AppState>,
     vault_id: Uuid,
     code: String,
-) -> AppResult<()> {
+) -> AppResult<ConfirmTotpResult> {
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
     let dek = state.get_active_dek(vault_id)?;
     let secret = state.take_totp_setup(vault_id)?;
@@ -155,7 +179,21 @@ pub fn confirm_totp(
         return Err(AppError::InvalidTotpCode);
     }
 
-    vault::enable_totp(&vault_dir, &dek, &secret)
+    let recovery_codes = vault::enable_totp(&vault_dir, &dek, &secret)?;
+    Ok(ConfirmTotpResult { recovery_codes })
+}
+
+/// Replaces a vault's recovery code pool (e.g. after one was used, or to
+/// invalidate an old set). Requires an active session.
+#[tauri::command]
+pub fn regenerate_recovery_codes(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let dek = state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::regenerate_recovery_codes(&vault_dir, &dek)
 }
 
 #[tauri::command]

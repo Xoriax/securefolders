@@ -21,6 +21,15 @@ pub struct FileEntry {
     pub added_at: DateTime<Utc>,
 }
 
+/// A single-use TOTP recovery code. Only its SHA-256 hash is ever stored —
+/// the plaintext code is shown to the user once, at generation time, and
+/// never again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryCode {
+    pub hash: Vec<u8>,
+    pub used: bool,
+}
+
 /// Everything needed to unlock and use a vault, persisted as `vault.json`
 /// inside the vault folder. Never contains the password or any derived key
 /// in plaintext.
@@ -36,10 +45,17 @@ pub struct VaultMetadata {
     pub totp_enabled: bool,
     /// TOTP secret, encrypted with the DEK. `None` unless 2FA is enabled.
     pub totp_secret_encrypted: Option<Vec<u8>>,
+    /// Hashes of unused/used single-use recovery codes, generated alongside
+    /// the TOTP secret. Lets a user who still knows the master password but
+    /// has lost their authenticator device regain access without an
+    /// authenticator, instead of being permanently locked out.
+    #[serde(default)]
+    pub recovery_codes: Vec<RecoveryCode>,
     /// HMAC-SHA256 (keyed by the DEK) over the security-critical fields
     /// above. Verified on every unlock so that editing `vault.json` outside
-    /// the app — e.g. flipping `totp_enabled` to `false` to strip 2FA —
-    /// is detected instead of silently changing the app's behaviour.
+    /// the app — e.g. flipping `totp_enabled` to `false`, or slipping in an
+    /// attacker-known recovery code hash — is detected instead of silently
+    /// changing the app's behaviour.
     pub integrity_tag: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub files: Vec<FileEntry>,
@@ -53,6 +69,7 @@ struct IntegrityFields<'a> {
     id: Uuid,
     totp_enabled: bool,
     totp_secret_encrypted: &'a Option<Vec<u8>>,
+    recovery_codes: &'a Vec<RecoveryCode>,
 }
 
 fn integrity_message(metadata: &VaultMetadata) -> Vec<u8> {
@@ -60,6 +77,7 @@ fn integrity_message(metadata: &VaultMetadata) -> Vec<u8> {
         id: metadata.id,
         totp_enabled: metadata.totp_enabled,
         totp_secret_encrypted: &metadata.totp_secret_encrypted,
+        recovery_codes: &metadata.recovery_codes,
     })
     .expect("serializing integrity fields cannot fail")
 }
@@ -162,6 +180,7 @@ pub fn create_vault(
         dek_encrypted,
         totp_enabled: false,
         totp_secret_encrypted: None,
+        recovery_codes: Vec::new(),
         integrity_tag: Vec::new(),
         created_at: Utc::now(),
         files: Vec::new(),
@@ -278,25 +297,78 @@ pub fn unlock(vault_dir: &Path, password: &str) -> AppResult<(VaultMetadata, Vau
     Ok((metadata, dek))
 }
 
-pub fn enable_totp(
-    vault_dir: &Path,
-    dek: &VaultKey,
-    secret_base32: &str,
-) -> AppResult<()> {
+const RECOVERY_CODE_COUNT: usize = 10;
+
+/// Enables 2FA and (re)generates its recovery codes in one step, since a
+/// TOTP secret without a recovery path is a lockout waiting to happen.
+/// Returns the plaintext codes — shown to the user exactly once.
+pub fn enable_totp(vault_dir: &Path, dek: &VaultKey, secret_base32: &str) -> AppResult<Vec<String>> {
     let mut metadata = load_metadata(vault_dir)?;
     let encrypted_secret = crypto::encrypt(dek, secret_base32.as_bytes())?;
     metadata.totp_enabled = true;
     metadata.totp_secret_encrypted = Some(encrypted_secret);
+
+    let codes = new_recovery_codes();
+    metadata.recovery_codes = codes.iter().map(|c| RecoveryCode {
+        hash: crypto::hash_recovery_code(c),
+        used: false,
+    }).collect();
+
     seal_integrity(&mut metadata, dek);
-    save_metadata(vault_dir, &metadata)
+    save_metadata(vault_dir, &metadata)?;
+    Ok(codes)
 }
 
 pub fn disable_totp(vault_dir: &Path, dek: &VaultKey) -> AppResult<()> {
     let mut metadata = load_metadata(vault_dir)?;
     metadata.totp_enabled = false;
     metadata.totp_secret_encrypted = None;
+    metadata.recovery_codes = Vec::new();
     seal_integrity(&mut metadata, dek);
     save_metadata(vault_dir, &metadata)
+}
+
+/// Replaces every recovery code with a fresh set, e.g. after the user has
+/// used one and wants a full pool again, or just wants to invalidate
+/// codes they no longer trust (old screenshot, etc). Requires an active
+/// session — i.e. the vault is already unlocked.
+pub fn regenerate_recovery_codes(vault_dir: &Path, dek: &VaultKey) -> AppResult<Vec<String>> {
+    let mut metadata = load_metadata(vault_dir)?;
+    if !metadata.totp_enabled {
+        return Err(AppError::TotpNotEnabled);
+    }
+    let codes = new_recovery_codes();
+    metadata.recovery_codes = codes.iter().map(|c| RecoveryCode {
+        hash: crypto::hash_recovery_code(c),
+        used: false,
+    }).collect();
+    seal_integrity(&mut metadata, dek);
+    save_metadata(vault_dir, &metadata)?;
+    Ok(codes)
+}
+
+/// Verifies a recovery code and, if it is valid and unused, consumes it
+/// (single use) and completes the unlock. Used as a fallback for
+/// `verify_totp` when the user has lost their authenticator device but
+/// still knows the master password.
+pub fn consume_recovery_code(vault_dir: &Path, dek: &VaultKey, code: &str) -> AppResult<()> {
+    let mut metadata = load_metadata(vault_dir)?;
+    verify_integrity(&metadata, dek)?;
+
+    let hash = crypto::hash_recovery_code(code);
+    let entry = metadata
+        .recovery_codes
+        .iter_mut()
+        .find(|c| !c.used && c.hash == hash)
+        .ok_or(AppError::InvalidRecoveryCode)?;
+    entry.used = true;
+
+    seal_integrity(&mut metadata, dek);
+    save_metadata(vault_dir, &metadata)
+}
+
+fn new_recovery_codes() -> Vec<String> {
+    (0..RECOVERY_CODE_COUNT).map(|_| crypto::generate_recovery_code()).collect()
 }
 
 pub fn decrypt_totp_secret(metadata: &VaultMetadata, dek: &VaultKey) -> AppResult<String> {

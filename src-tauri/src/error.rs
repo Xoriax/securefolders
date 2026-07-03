@@ -12,6 +12,8 @@ pub enum AppError {
     WrongPassword,
     #[error("Code 2FA invalide")]
     InvalidTotpCode,
+    #[error("Code de recuperation invalide ou deja utilise")]
+    InvalidRecoveryCode,
     #[error("Le 2FA n'est pas active pour ce coffre")]
     TotpNotEnabled,
     #[error("Ce coffre semble avoir ete modifie en dehors de l'application. Ouverture refusee par securite.")]

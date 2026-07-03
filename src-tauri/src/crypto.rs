@@ -3,7 +3,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::{AppError, AppResult};
@@ -122,6 +122,41 @@ pub fn verify_mac(key: &VaultKey, message: &[u8], tag: &[u8]) -> bool {
         <HmacSha256 as Mac>::new_from_slice(&key.0).expect("HMAC accepts a key of any size");
     mac.update(message);
     mac.verify_slice(tag).is_ok()
+}
+
+// Crockford-style alphabet with ambiguous characters (0/O, 1/I/L, U) removed,
+// so a code read off a screenshot or printout is never misread.
+const RECOVERY_CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTVWXYZ23456789";
+const RECOVERY_CODE_GROUPS: usize = 4;
+const RECOVERY_CODE_GROUP_LEN: usize = 4;
+
+/// Generates a single-use TOTP recovery code, e.g. `"XQ2P-7RTK-4MNC-9VWZ"`
+/// (~80 bits of entropy — high enough that hashing with plain SHA-256,
+/// rather than a slow KDF, is fine: brute force is infeasible regardless of
+/// hash speed).
+pub fn generate_recovery_code() -> String {
+    let mut rng = rand::rngs::OsRng;
+    (0..RECOVERY_CODE_GROUPS)
+        .map(|_| {
+            (0..RECOVERY_CODE_GROUP_LEN)
+                .map(|_| {
+                    let idx = (rng.next_u32() as usize) % RECOVERY_CODE_ALPHABET.len();
+                    RECOVERY_CODE_ALPHABET[idx] as char
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Strips formatting so a code can be compared regardless of how the user
+/// typed it back in (with/without dashes, lowercase, extra spaces).
+pub fn normalize_recovery_code(code: &str) -> String {
+    code.trim().to_uppercase().chars().filter(|c| !c.is_whitespace() && *c != '-').collect()
+}
+
+pub fn hash_recovery_code(code: &str) -> Vec<u8> {
+    Sha256::digest(normalize_recovery_code(code).as_bytes()).to_vec()
 }
 
 /// Generates a fresh random Data Encryption Key (DEK). The DEK is what
