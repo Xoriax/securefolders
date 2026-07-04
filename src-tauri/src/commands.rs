@@ -159,6 +159,9 @@ pub fn create_vault(
 /// Verifies the master password. If the vault has 2FA enabled, the DEK is
 /// held in a pending state until `verify_totp` supplies a valid code; the
 /// caller must treat `requires_totp: true` as "not yet unlocked".
+///
+/// Rate-limited: repeated wrong passwords lock the vault out for a growing
+/// delay (see `AppState::record_failed_attempt`).
 #[tauri::command]
 pub fn unlock_vault(
     app: AppHandle,
@@ -166,13 +169,21 @@ pub fn unlock_vault(
     vault_id: Uuid,
     password: String,
 ) -> AppResult<UnlockResult> {
+    state.check_rate_limit(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    let (metadata, dek) = vault::unlock(&vault_dir, &password)?;
+    let (metadata, dek) = match vault::unlock(&vault_dir, &password) {
+        Ok(v) => v,
+        Err(e) => {
+            state.record_failed_attempt(vault_id);
+            return Err(e);
+        }
+    };
 
     if metadata.totp_enabled {
         state.begin_totp_unlock(vault_id, dek);
         Ok(UnlockResult { requires_totp: true })
     } else {
+        state.record_successful_attempt(vault_id);
         state.open_session(vault_id, dek);
         Ok(UnlockResult { requires_totp: false })
     }
@@ -187,6 +198,7 @@ pub fn verify_totp(
     vault_id: Uuid,
     code: String,
 ) -> AppResult<()> {
+    state.check_rate_limit(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
     let metadata = vault::load_metadata(&vault_dir)?;
 
@@ -196,8 +208,10 @@ pub fn verify_totp(
     let secret = vault::decrypt_totp_secret(&metadata, &dek)?;
 
     if !totp::verify_code(&secret, &code, &metadata.name)? {
+        state.record_failed_attempt(vault_id);
         return Err(AppError::InvalidTotpCode);
     }
+    state.record_successful_attempt(vault_id);
     state.complete_totp_unlock(vault_id)
 }
 
@@ -211,9 +225,14 @@ pub fn unlock_with_recovery_code(
     vault_id: Uuid,
     code: String,
 ) -> AppResult<()> {
+    state.check_rate_limit(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
     let dek = state.peek_pending_totp_unlock(vault_id)?;
-    vault::consume_recovery_code(&vault_dir, &dek, &code)?;
+    if let Err(e) = vault::consume_recovery_code(&vault_dir, &dek, &code) {
+        state.record_failed_attempt(vault_id);
+        return Err(e);
+    }
+    state.record_successful_attempt(vault_id);
     state.complete_totp_unlock(vault_id)
 }
 

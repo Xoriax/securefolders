@@ -18,6 +18,8 @@ pub enum AppError {
     TotpNotEnabled,
     #[error("Ce coffre semble avoir ete modifie en dehors de l'application. Ouverture refusee par securite.")]
     VaultTampered,
+    #[error("Trop de tentatives echouees. Reessayez dans {0} secondes.")]
+    TooManyAttempts(u64),
     #[error("Fichier introuvable dans le coffre")]
     FileNotFound,
     #[error("Erreur d'entree/sortie: {0}")]
