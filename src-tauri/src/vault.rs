@@ -160,9 +160,20 @@ pub fn create_vault(
     password: &str,
 ) -> AppResult<(VaultMetadata, PathBuf)> {
     let vault_dir = location.join(sanitize_folder_name(name));
-    if vault_dir.exists() {
-        return Err(AppError::VaultAlreadyExists);
-    }
+    // `create_dir` (not `create_dir_all`) atomically doubles as the
+    // existence check: two concurrent creations for the same name/location
+    // (e.g. a double-submitted form) race the OS's mkdir instead of a
+    // separate exists()-then-create step, so only one can win and the
+    // loser gets `AlreadyExists` instead of silently overwriting the
+    // winner's vault.json and leaving a duplicate, orphaned entry in the
+    // vault index.
+    fs::create_dir(&vault_dir).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::VaultAlreadyExists
+        } else {
+            AppError::Io(e)
+        }
+    })?;
     fs::create_dir_all(vault_dir.join(FILES_DIR))?;
 
     let salt = crypto::random_salt();
