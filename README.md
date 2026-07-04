@@ -73,6 +73,7 @@ src-tauri/src/
 8. Aucune clé n'est jamais écrite en clair sur le disque ; les clés déverrouillées ne vivent qu'en RAM et sont effacées (`zeroize`) à la fermeture de session.
 9. L'export d'un fichier le déchiffre dans un dossier temporaire géré par l'application (jamais un emplacement choisi par l'utilisateur), ouvert avec l'application par défaut du système. Ce dossier temporaire est supprimé automatiquement au verrouillage du coffre (ou de tous les coffres).
 10. L'aperçu (images, texte) réutilise ce même mécanisme d'export temporaire ; les images sont servies via le protocole `asset://` de Tauri plutôt que chargées en mémoire côté interface, et les fichiers de plus de 20 Mo ou de type non reconnu ne sont jamais déchiffrés pour un aperçu — seul l'export l'autorise.
+11. Les tentatives de déverrouillage (mot de passe, code TOTP, code de récupération) sont limitées en fréquence : passé 4 essais infructueux, chaque nouvel échec verrouille le coffre un peu plus longtemps (5 s, 10 s, 20 s, ... jusqu'à 5 minutes), remis à zéro dès qu'une tentative aboutit. Ce compteur vit en mémoire, pas sur disque : il protège contre le devinage via l'interface, pas contre un attaquant qui copierait le dossier du coffre pour attaquer Argon2id hors ligne — rien côté application ne peut empêcher cela.
 
 ## Limites de sécurité connues
 
@@ -84,7 +85,6 @@ src-tauri/src/
 
 ## Feuille de route
 
-- [ ] Rate-limit / délai croissant après échecs de mot de passe répétés
 - [ ] Timer d'auto-verrouillage configurable depuis les paramètres
 - [ ] Signature de code (certificat) pour supprimer l'avertissement SmartScreen
 - [ ] Site vitrine avec page de téléchargement

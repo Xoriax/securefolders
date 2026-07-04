@@ -4,6 +4,14 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.7.0] - 2026-07-04
+
+### Ajoute
+- Rate-limit progressif sur les tentatives de deverrouillage : 4 essais libres (mot de passe maitre, code TOTP ou code de recuperation confondus, car ils gardent le meme flux de connexion), puis un verrouillage qui double a chaque nouvel echec (5s, 10s, 20s, ... plafonne a 5 minutes). Reinitialise des qu'une tentative aboutit. En memoire uniquement : n'empeche pas un attaquant qui copierait le dossier du coffre pour attaquer Argon2id hors ligne, mais bloque le brute-force via l'interface elle-meme.
+
+### Corrige
+- Course critique dans `create_vault` : la verification d'existence du dossier et sa creation etaient deux etapes separees, si bien qu'un double-clic ou une double soumission pouvait laisser deux entrees pointant vers le meme coffre dans l'index (observe concretement : cle React dupliquee dans la liste des coffres). La creation du dossier est desormais atomique (`create_dir` echoue directement si le dossier existe deja), ce qui rend impossible la double insertion.
+
 ## [0.6.0] - 2026-07-04
 
 ### Ajoute
