@@ -6,10 +6,7 @@ use uuid::Uuid;
 
 use crate::crypto::VaultKey;
 use crate::error::{AppError, AppResult};
-
-/// Default auto-lock delay. Exposed as a constant for now; wiring it to the
-/// settings screen is tracked as follow-up work.
-pub const AUTO_LOCK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+use crate::settings::DEFAULT_AUTO_LOCK_SECS;
 
 /// Failed attempts allowed before any lockout kicks in — enough that a
 /// mistyped password doesn't punish a legitimate user.
@@ -39,7 +36,6 @@ struct UnlockedSession {
     last_activity: Instant,
 }
 
-#[derive(Default)]
 pub struct AppState {
     /// Fully authenticated sessions (password, and TOTP if enabled).
     sessions: Mutex<HashMap<Uuid, UnlockedSession>>,
@@ -53,6 +49,22 @@ pub struct AppState {
     pending_totp_setup: Mutex<HashMap<Uuid, String>>,
     /// Rate-limiting state for login attempts, keyed by vault.
     attempts: Mutex<HashMap<Uuid, AttemptTracker>>,
+    /// Configurable auto-lock delay, seeded from the persisted setting at
+    /// startup (see `settings::load_auto_lock_secs`) and updated live when
+    /// the user changes it, with no need to restart the app.
+    auto_lock_timeout: Mutex<Duration>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            pending_totp_unlock: Mutex::new(HashMap::new()),
+            pending_totp_setup: Mutex::new(HashMap::new()),
+            attempts: Mutex::new(HashMap::new()),
+            auto_lock_timeout: Mutex::new(Duration::from_secs(DEFAULT_AUTO_LOCK_SECS)),
+        }
+    }
 }
 
 impl AppState {
@@ -115,11 +127,12 @@ impl AppState {
     /// bumping its activity timestamp. Lazily evicts and reports as locked
     /// if the auto-lock timeout has elapsed.
     pub fn get_active_dek(&self, vault_id: Uuid) -> AppResult<VaultKey> {
+        let timeout = self.auto_lock_timeout();
         let mut sessions = self.sessions.lock().unwrap();
         let Some(session) = sessions.get_mut(&vault_id) else {
             return Err(AppError::VaultLocked);
         };
-        if session.last_activity.elapsed() > AUTO_LOCK_TIMEOUT {
+        if session.last_activity.elapsed() > timeout {
             sessions.remove(&vault_id);
             return Err(AppError::VaultLocked);
         }
@@ -127,8 +140,34 @@ impl AppState {
         Ok(session.dek.clone())
     }
 
+    /// A read-only version of `get_active_dek`'s expiry check: reports
+    /// whether the session is still alive and evicts it if not, but never
+    /// bumps `last_activity`. Used by the frontend's periodic "is this
+    /// vault still unlocked?" poll — if it bumped activity like a real
+    /// command does, that poll alone would keep the session alive forever
+    /// and auto-lock would never fire while the vault view stays open.
     pub fn is_unlocked(&self, vault_id: Uuid) -> bool {
-        self.get_active_dek(vault_id).is_ok()
+        let timeout = self.auto_lock_timeout();
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(session) = sessions.get(&vault_id) else {
+            return false;
+        };
+        if session.last_activity.elapsed() > timeout {
+            sessions.remove(&vault_id);
+            return false;
+        }
+        true
+    }
+
+    pub fn auto_lock_timeout(&self) -> Duration {
+        *self.auto_lock_timeout.lock().unwrap()
+    }
+
+    /// Applies a new auto-lock delay immediately, to every vault's session —
+    /// the caller is responsible for also persisting it via
+    /// `settings::save_auto_lock_secs` so it survives an app restart.
+    pub fn set_auto_lock_timeout(&self, timeout: Duration) {
+        *self.auto_lock_timeout.lock().unwrap() = timeout;
     }
 
     pub fn lock_vault(&self, vault_id: Uuid) {
@@ -257,5 +296,16 @@ mod tests {
             other => panic!("expected TooManyAttempts, got {other:?}"),
         };
         assert!(second_delay > first_delay);
+    }
+
+    #[test]
+    fn a_session_is_evicted_once_it_outlives_the_configured_timeout() {
+        let state = AppState::default();
+        let vault_id = Uuid::new_v4();
+        state.set_auto_lock_timeout(Duration::from_millis(20));
+        state.open_session(vault_id, VaultKey([0u8; 32]));
+        assert!(state.is_unlocked(vault_id));
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(!state.is_unlocked(vault_id));
     }
 }

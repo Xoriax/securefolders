@@ -1,9 +1,14 @@
 mod commands;
 mod crypto;
 mod error;
+mod settings;
 mod state;
 mod totp;
 mod vault;
+
+use std::time::Duration;
+
+use tauri::Manager;
 
 use state::AppState;
 
@@ -20,6 +25,12 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+            if let Ok(app_data_dir) = app.path().app_data_dir() {
+                if let Ok(secs) = settings::load_auto_lock_secs(&app_data_dir) {
+                    app.state::<AppState>()
+                        .set_auto_lock_timeout(Duration::from_secs(secs));
+                }
             }
             Ok(())
         })
@@ -44,6 +55,8 @@ pub fn run() {
             commands::rename_vault,
             commands::change_master_password,
             commands::disable_totp,
+            commands::get_auto_lock_seconds,
+            commands::set_auto_lock_seconds,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

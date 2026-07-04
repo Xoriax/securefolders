@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::{totp, vault};
+use crate::{settings, totp, vault};
 
 /// How often (at most) a file transfer emits a progress event to the
 /// frontend. Chunk-by-chunk would be hundreds of IPC messages per second on
@@ -475,4 +475,26 @@ pub fn disable_totp(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> A
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
     vault::disable_totp(&vault_dir, &dek)
+}
+
+#[tauri::command]
+pub fn get_auto_lock_seconds(state: State<AppState>) -> u64 {
+    state.auto_lock_timeout().as_secs()
+}
+
+/// Changes how long an unlocked vault can sit idle before it auto-locks.
+/// Applies immediately to every open session and is persisted so it
+/// survives an app restart.
+#[tauri::command]
+pub fn set_auto_lock_seconds(app: AppHandle, state: State<AppState>, seconds: u64) -> AppResult<()> {
+    if seconds < settings::MIN_AUTO_LOCK_SECS || seconds > settings::MAX_AUTO_LOCK_SECS {
+        return Err(AppError::Crypto(format!(
+            "le delai d'auto-verrouillage doit etre compris entre {} et {} secondes",
+            settings::MIN_AUTO_LOCK_SECS,
+            settings::MAX_AUTO_LOCK_SECS
+        )));
+    }
+    settings::save_auto_lock_secs(&app_data_dir(&app)?, seconds)?;
+    state.set_auto_lock_timeout(Duration::from_secs(seconds));
+    Ok(())
 }
