@@ -203,7 +203,8 @@
 }
 
 .field input[type="text"],
-.field input[type="password"] {
+.field input[type="password"],
+.field select {
   width: 100%;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -213,7 +214,8 @@
   font-size: 13px;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: none;
   border-color: var(--accent);
 }

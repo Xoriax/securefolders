@@ -63,6 +63,11 @@ export const api = {
     invoke<void>("change_master_password", { vaultId, oldPassword, newPassword }),
 
   disableTotp: (vaultId: string) => invoke<void>("disable_totp", { vaultId }),
+
+  getAutoLockSeconds: () => invoke<number>("get_auto_lock_seconds"),
+
+  setAutoLockSeconds: (seconds: number) =>
+    invoke<void>("set_auto_lock_seconds", { seconds }),
 };
 
 export function errorMessage(err: unknown): string {
