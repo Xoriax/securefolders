@@ -4,6 +4,14 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.8.0] - 2026-07-04
+
+### Ajoute
+- Delai d'auto-verrouillage configurable depuis les Parametres (de 30 secondes a 4 heures), applique immediatement a toutes les sessions ouvertes et persiste sur disque pour survivre a un redemarrage de l'application.
+
+### Corrige
+- Le sondage periodique de l'interface qui verifie si un coffre est toujours deverrouille (`is_vault_unlocked`, toutes les 10 secondes) reinitialisait par erreur le minuteur d'inactivite a chaque appel, empechant tout verrouillage automatique tant que l'ecran du coffre restait ouvert — quelle que soit la duree reelle d'inactivite de l'utilisateur. Ce sondage est desormais une simple lecture qui n'influence plus le delai.
+
 ## [0.7.0] - 2026-07-04
 
 ### Ajoute

@@ -59,7 +59,7 @@ src-tauri/src/
 
 ### Commandes Tauri disponibles
 
-`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `unlock_with_recovery_code`, `regenerate_recovery_codes`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `remove_file`, `export_file`, `preview_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`.
+`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `unlock_with_recovery_code`, `regenerate_recovery_codes`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `remove_file`, `export_file`, `preview_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`, `get_auto_lock_seconds`, `set_auto_lock_seconds`.
 
 ### Modèle de chiffrement
 
@@ -78,14 +78,12 @@ src-tauri/src/
 ## Limites de sécurité connues
 
 - **Mot de passe perdu = données perdues.** Il n'existe aucune récupération possible, par conception.
-- L'auto-verrouillage (5 minutes d'inactivité) est actuellement une valeur fixe, pas encore configurable depuis l'interface.
 - La suppression du dossier temporaire d'export au verrouillage n'est pas garantie irrécupérable sur SSD (limitation physique du TRIM/wear-leveling, pas propre à l'application).
 - Si les 10 codes de récupération TOTP sont tous consommés ou perdus (et l'application d'authentification également perdue), le coffre redevient inaccessible ; il faut régénérer les codes depuis un appareil où le coffre est encore déverrouillé, avant d'en arriver là.
 - Le binaire n'est pas signé numériquement : Windows SmartScreen affichera un avertissement à l'installation si l'application est distribuée hors du Microsoft Store.
 
 ## Feuille de route
 
-- [ ] Timer d'auto-verrouillage configurable depuis les paramètres
 - [ ] Signature de code (certificat) pour supprimer l'avertissement SmartScreen
 - [ ] Site vitrine avec page de téléchargement
 
