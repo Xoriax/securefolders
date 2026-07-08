@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SecureFolders",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "identifier": "com.securefolders.app",
   "build": {
     "frontendDist": "../dist",
@@ -32,6 +32,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

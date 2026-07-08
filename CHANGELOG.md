@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.15.1] - 2026-07-08
+
+### Corrige
+- L'updater ne produisait aucune signature pour les installateurs (`bundle.createUpdaterArtifacts` manquant dans `tauri.conf.json`, requis en plus de la cle de signature pour que Tauri genere les `.sig` et le `latest.json`) : verifier les mises a jour aurait continue a echouer indefiniment avec "Could not fetch a valid release JSON" meme sur une version qui inclut la fonctionnalite.
+
 ## [0.15.0] - 2026-07-08
 
 ### Ajoute
