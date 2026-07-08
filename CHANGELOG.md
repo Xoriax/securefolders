@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.14.0] - 2026-07-08
+
+### Ajoute
+- Organisation en sous-dossiers a l'interieur d'un coffre : creation, renommage, navigation par fil d'Ariane, et suppression recursive (dossier + tout son contenu, imbrication comprise). Les dossiers sont une notion purement organisationnelle dans `vault.json` — les fichiers chiffres restent stockes a plat sur disque, nommes par leur UUID, quelle que soit leur position dans l'arborescence.
+
 ## [0.13.0] - 2026-07-08
 
 ### Ajoute

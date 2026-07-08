@@ -60,7 +60,7 @@ src-tauri/src/
 
 ### Commandes Tauri disponibles
 
-`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `unlock_with_recovery_code`, `regenerate_recovery_codes`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `rename_file`, `remove_file`, `export_file`, `export_file_to`, `preview_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`, `get_auto_lock_seconds`, `set_auto_lock_seconds`, `get_launch_target`, `create_vault_launcher`, `export_vault_backup`, `import_vault_backup`.
+`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `unlock_with_recovery_code`, `regenerate_recovery_codes`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `rename_file`, `remove_file`, `export_file`, `export_file_to`, `preview_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`, `get_auto_lock_seconds`, `set_auto_lock_seconds`, `get_launch_target`, `create_vault_launcher`, `export_vault_backup`, `import_vault_backup`, `list_folders`, `create_folder`, `rename_folder`, `delete_folder`.
 
 ### Modèle de chiffrement
 
@@ -79,6 +79,7 @@ src-tauri/src/
 13. Chaque coffre reçoit un raccourci Windows (`Ouvrir avec SecureFolders.lnk`) déposé dans son dossier, qui relance l'application directement dessus — Windows n'offrant aucun moyen natif de faire réagir un double-clic sur le dossier lui-même.
 14. La sauvegarde d'un coffre regroupe `vault.json` et les fichiers déjà chiffrés dans une seule archive .zip, sans déchiffrement ni chiffrement supplémentaire — l'archive n'a pas besoin de son propre mot de passe puisque son contenu l'est déjà. Le raccourci de lancement et la protection anti-suppression, spécifiques à la machine, ne sont pas inclus ; ils sont recréés à l'import.
 15. Tous les coffres se verrouillent automatiquement au réveil d'une mise en veille ou d'une hibernation, en plus du délai d'inactivité habituel. Détecté côté interface via un écart anormalement grand entre deux sondages réguliers — un minuteur JavaScript ne peut pas être mis en pause de cette façon autrement que si le système d'exploitation a réellement suspendu le processus. Cela ne détecte pas un verrouillage manuel de session Windows (Win+L) qui n'endort pas la machine ; ce cas reste couvert par le délai d'inactivité normal.
+16. Les dossiers à l'intérieur d'un coffre sont une notion purement organisationnelle, stockée dans `vault.json` (nom, identifiant, dossier parent) : ils n'existent pas comme de vrais répertoires sur le disque. Chaque fichier chiffré reste stocké à plat dans `files/`, nommé par son UUID, quelle que soit sa position dans l'arborescence affichée. Supprimer un dossier supprime récursivement tout son contenu, y compris les sous-dossiers imbriqués.
 
 ## Limites de sécurité connues
 
