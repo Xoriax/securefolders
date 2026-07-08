@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::{launcher, settings, totp, vault};
+use crate::{capture_protection, launcher, settings, totp, vault};
 
 /// How often (at most) a file transfer emits a progress event to the
 /// frontend. Chunk-by-chunk would be hundreds of IPC messages per second on
@@ -197,6 +197,7 @@ pub fn unlock_vault(
     } else {
         state.record_successful_attempt(vault_id);
         state.open_session(vault_id, dek);
+        capture_protection::sync(&app, &state);
         Ok(UnlockResult { requires_totp: false })
     }
 }
@@ -224,7 +225,9 @@ pub fn verify_totp(
         return Err(AppError::InvalidTotpCode);
     }
     state.record_successful_attempt(vault_id);
-    state.complete_totp_unlock(vault_id)
+    state.complete_totp_unlock(vault_id)?;
+    capture_protection::sync(&app, &state);
+    Ok(())
 }
 
 /// Fallback for `verify_totp` when the user has lost their authenticator
@@ -245,25 +248,29 @@ pub fn unlock_with_recovery_code(
         return Err(e);
     }
     state.record_successful_attempt(vault_id);
-    state.complete_totp_unlock(vault_id)
+    state.complete_totp_unlock(vault_id)?;
+    capture_protection::sync(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn lock_vault(state: State<AppState>, vault_id: Uuid) {
+pub fn lock_vault(app: AppHandle, state: State<AppState>, vault_id: Uuid) {
     state.lock_vault(vault_id);
     if let Err(e) = vault::wipe_temp_exports(vault_id) {
         log::warn!("echec du nettoyage des exports temporaires pour {vault_id}: {e}");
     }
+    capture_protection::sync(&app, &state);
 }
 
 /// Locks every unlocked vault at once — used by the settings "lock all"
 /// action and by the frontend's global inactivity timer.
 #[tauri::command]
-pub fn lock_all_vaults(state: State<AppState>) {
+pub fn lock_all_vaults(app: AppHandle, state: State<AppState>) {
     state.lock_all();
     if let Err(e) = vault::wipe_all_temp_exports() {
         log::warn!("echec du nettoyage des exports temporaires: {e}");
     }
+    capture_protection::sync(&app, &state);
 }
 
 #[tauri::command]
@@ -514,9 +521,15 @@ pub fn preview_file(
     Ok(FilePreview::Text { content, truncated })
 }
 
+/// Also resyncs the capture-exclusion state (see `capture_protection`),
+/// since this is the only place that notices a vault expiring from
+/// inactivity or a detected sleep — neither goes through an explicit
+/// `lock_vault`/`lock_all_vaults` call.
 #[tauri::command]
-pub fn is_vault_unlocked(state: State<AppState>, vault_id: Uuid) -> bool {
-    state.is_unlocked(vault_id)
+pub fn is_vault_unlocked(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> bool {
+    let unlocked = state.is_unlocked(vault_id);
+    capture_protection::sync(&app, &state);
+    unlocked
 }
 
 /// Permanently deletes a vault (metadata + encrypted files). Requires an

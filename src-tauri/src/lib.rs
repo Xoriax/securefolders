@@ -1,4 +1,5 @@
 mod acl;
+mod capture_protection;
 mod commands;
 mod crypto;
 mod error;

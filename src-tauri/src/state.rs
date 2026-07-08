@@ -164,6 +164,13 @@ impl AppState {
         true
     }
 
+    /// Whether at least one vault currently has a fully authenticated
+    /// session open — used to decide whether the main window should stay
+    /// excluded from screen capture (see `capture_protection`).
+    pub fn any_session_open(&self) -> bool {
+        !self.sessions.lock().unwrap().is_empty()
+    }
+
     pub fn auto_lock_timeout(&self) -> Duration {
         *self.auto_lock_timeout.lock().unwrap()
     }

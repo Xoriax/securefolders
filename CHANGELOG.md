@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.18.0] - 2026-07-08
+
+### Securite
+- La fenetre principale est exclue de la capture d'ecran (`SetWindowDisplayAffinity` / `WDA_EXCLUDEFROMCAPTURE`) des qu'au moins un coffre est deverrouille : les outils de capture d'ecran, les enregistreurs et le partage d'ecran (visioconference, RDP) l'affichent noire ou l'ignorent, alors qu'elle reste parfaitement visible pour l'utilisateur sur son propre ecran. Retiree automatiquement des que tous les coffres sont verrouilles (manuellement, par inactivite ou par la detection de mise en veille). Best-effort comme les autres mitigations memoire deja en place.
+
 ## [0.17.1] - 2026-07-08
 
 ### Corrige
