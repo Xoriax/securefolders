@@ -78,9 +78,68 @@ pub struct VaultMetadata {
     /// changing the app's behaviour.
     pub integrity_tag: Vec<u8>,
     pub created_at: DateTime<Utc>,
-    pub files: Vec<FileEntry>,
+    /// Files and folders (names, sizes, timestamps, folder structure),
+    /// serialized as a `VaultContent` and encrypted as one AES-256-GCM blob
+    /// under the DEK. Empty (`vec![]`) until the first file or folder is
+    /// added. Unlike everything else in this struct, this is the one field
+    /// that is actually confidential — see `load_content`/`write_content` —
+    /// so a stolen vault folder reveals nothing about its contents, not even
+    /// file names or how many files it holds, without the master password.
     #[serde(default)]
-    pub folders: Vec<Folder>,
+    pub content_encrypted: Vec<u8>,
+}
+
+/// The confidential part of a vault: everything that says something about
+/// its contents. Bundled into one blob (rather than encrypting `FileEntry`
+/// and `Folder` individually) so a single AES-256-GCM tag authenticates the
+/// whole structure at once, and adding a file doesn't leak how many files
+/// already existed via ciphertext length alone growing by a predictable
+/// per-entry amount.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct VaultContent {
+    #[serde(default)]
+    files: Vec<FileEntry>,
+    #[serde(default)]
+    folders: Vec<Folder>,
+}
+
+/// Decrypts `metadata.content_encrypted` with the DEK. An empty blob (a
+/// freshly created vault, or one restored from a pre-metadata-encryption
+/// backup that was never opened since) decodes as an empty `VaultContent`
+/// rather than an error.
+fn load_content(metadata: &VaultMetadata, dek: &VaultKey) -> AppResult<VaultContent> {
+    if metadata.content_encrypted.is_empty() {
+        return Ok(VaultContent::default());
+    }
+    let bytes = crypto::decrypt(dek, &metadata.content_encrypted)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// Re-encrypts `content` under the DEK, stores it on `metadata`, and
+/// persists the whole thing to `vault.json` in one write.
+fn write_content(
+    vault_dir: &Path,
+    metadata: &mut VaultMetadata,
+    dek: &VaultKey,
+    content: &VaultContent,
+) -> AppResult<()> {
+    let bytes = serde_json::to_vec(content)?;
+    metadata.content_encrypted = crypto::encrypt(dek, &bytes)?;
+    save_metadata(vault_dir, metadata)
+}
+
+/// Every file in a vault, decrypted from `content_encrypted`. Requires an
+/// active session (the DEK) — unlike before, this can no longer be read by
+/// just parsing `vault.json`.
+pub fn list_files(vault_dir: &Path, dek: &VaultKey) -> AppResult<Vec<FileEntry>> {
+    let metadata = load_metadata(vault_dir)?;
+    Ok(load_content(&metadata, dek)?.files)
+}
+
+/// Every folder in a vault, decrypted from `content_encrypted`.
+pub fn list_folders(vault_dir: &Path, dek: &VaultKey) -> AppResult<Vec<Folder>> {
+    let metadata = load_metadata(vault_dir)?;
+    Ok(load_content(&metadata, dek)?.folders)
 }
 
 /// Fields covered by `integrity_tag`. Kept separate from `VaultMetadata` so
@@ -133,7 +192,6 @@ pub struct VaultSummary {
     pub name: String,
     pub path: PathBuf,
     pub totp_enabled: bool,
-    pub file_count: usize,
     pub created_at: DateTime<Utc>,
 }
 
@@ -222,11 +280,10 @@ pub fn create_vault(
         recovery_codes: Vec::new(),
         integrity_tag: Vec::new(),
         created_at: Utc::now(),
-        files: Vec::new(),
-        folders: Vec::new(),
+        content_encrypted: Vec::new(),
     };
     seal_integrity(&mut metadata, &dek);
-    save_metadata(&vault_dir, &metadata)?;
+    write_content(&vault_dir, &mut metadata, &dek, &VaultContent::default())?;
 
     // Best-effort: a missing shortcut is a convenience regression, not a
     // reason to fail creating the vault outright.
@@ -259,7 +316,6 @@ pub fn list_vaults(app_data_dir: &Path) -> AppResult<Vec<VaultSummary>> {
             name: metadata.name,
             path: entry.path,
             totp_enabled: metadata.totp_enabled,
-            file_count: metadata.files.len(),
             created_at: metadata.created_at,
         });
     }
@@ -440,9 +496,10 @@ pub fn add_file(
     on_progress: impl FnMut(u64, u64),
 ) -> AppResult<FileEntry> {
     let mut metadata = load_metadata(vault_dir)?;
+    let mut content = load_content(&metadata, dek)?;
 
     if let Some(parent) = parent_id {
-        if !metadata.folders.iter().any(|f| f.id == parent) {
+        if !content.folders.iter().any(|f| f.id == parent) {
             return Err(AppError::FileNotFound);
         }
     }
@@ -465,30 +522,32 @@ pub fn add_file(
         added_at: Utc::now(),
         parent_id,
     };
-    metadata.files.push(entry.clone());
-    save_metadata(vault_dir, &metadata)?;
+    content.files.push(entry.clone());
+    write_content(vault_dir, &mut metadata, dek, &content)?;
 
     Ok(entry)
 }
 
 /// Renames a file's display name. The on-disk encrypted blob is named by
 /// its UUID, never the file's own name, so this only touches metadata.
-pub fn rename_file(vault_dir: &Path, file_id: Uuid, new_name: &str) -> AppResult<()> {
+pub fn rename_file(vault_dir: &Path, dek: &VaultKey, file_id: Uuid, new_name: &str) -> AppResult<()> {
     let mut metadata = load_metadata(vault_dir)?;
-    let entry = metadata
+    let mut content = load_content(&metadata, dek)?;
+    let entry = content
         .files
         .iter_mut()
         .find(|f| f.id == file_id)
         .ok_or(AppError::FileNotFound)?;
     entry.name = new_name.to_string();
-    save_metadata(vault_dir, &metadata)
+    write_content(vault_dir, &mut metadata, dek, &content)
 }
 
-pub fn remove_file(vault_dir: &Path, file_id: Uuid) -> AppResult<()> {
+pub fn remove_file(vault_dir: &Path, dek: &VaultKey, file_id: Uuid) -> AppResult<()> {
     let mut metadata = load_metadata(vault_dir)?;
-    let before = metadata.files.len();
-    metadata.files.retain(|f| f.id != file_id);
-    if metadata.files.len() == before {
+    let mut content = load_content(&metadata, dek)?;
+    let before = content.files.len();
+    content.files.retain(|f| f.id != file_id);
+    if content.files.len() == before {
         return Err(AppError::FileNotFound);
     }
 
@@ -499,16 +558,17 @@ pub fn remove_file(vault_dir: &Path, file_id: Uuid) -> AppResult<()> {
         acl::allow_delete_once(&encrypted_path)?;
         fs::remove_file(encrypted_path)?;
     }
-    save_metadata(vault_dir, &metadata)
+    write_content(vault_dir, &mut metadata, dek, &content)
 }
 
 /// Creates a folder inside a vault, purely as metadata (see `Folder`) — no
 /// directory is created on disk. `parent_id` must reference an existing
 /// folder, or be `None` to create it at the vault's root.
-pub fn create_folder(vault_dir: &Path, parent_id: Option<Uuid>, name: &str) -> AppResult<Folder> {
+pub fn create_folder(vault_dir: &Path, dek: &VaultKey, parent_id: Option<Uuid>, name: &str) -> AppResult<Folder> {
     let mut metadata = load_metadata(vault_dir)?;
+    let mut content = load_content(&metadata, dek)?;
     if let Some(parent) = parent_id {
-        if !metadata.folders.iter().any(|f| f.id == parent) {
+        if !content.folders.iter().any(|f| f.id == parent) {
             return Err(AppError::FileNotFound);
         }
     }
@@ -517,29 +577,31 @@ pub fn create_folder(vault_dir: &Path, parent_id: Option<Uuid>, name: &str) -> A
         name: name.to_string(),
         parent_id,
     };
-    metadata.folders.push(folder.clone());
-    save_metadata(vault_dir, &metadata)?;
+    content.folders.push(folder.clone());
+    write_content(vault_dir, &mut metadata, dek, &content)?;
     Ok(folder)
 }
 
-pub fn rename_folder(vault_dir: &Path, folder_id: Uuid, new_name: &str) -> AppResult<()> {
+pub fn rename_folder(vault_dir: &Path, dek: &VaultKey, folder_id: Uuid, new_name: &str) -> AppResult<()> {
     let mut metadata = load_metadata(vault_dir)?;
-    let folder = metadata
+    let mut content = load_content(&metadata, dek)?;
+    let folder = content
         .folders
         .iter_mut()
         .find(|f| f.id == folder_id)
         .ok_or(AppError::FileNotFound)?;
     folder.name = new_name.to_string();
-    save_metadata(vault_dir, &metadata)
+    write_content(vault_dir, &mut metadata, dek, &content)
 }
 
 /// Deletes a folder and everything inside it, recursively — nested
 /// folders and files alike. Mirrors `remove_file` in having no separate
 /// confirmation step of its own; the frontend is responsible for warning
 /// the user before calling this on a non-empty folder.
-pub fn delete_folder(vault_dir: &Path, folder_id: Uuid) -> AppResult<()> {
+pub fn delete_folder(vault_dir: &Path, dek: &VaultKey, folder_id: Uuid) -> AppResult<()> {
     let mut metadata = load_metadata(vault_dir)?;
-    if !metadata.folders.iter().any(|f| f.id == folder_id) {
+    let mut content = load_content(&metadata, dek)?;
+    if !content.folders.iter().any(|f| f.id == folder_id) {
         return Err(AppError::FileNotFound);
     }
 
@@ -548,7 +610,7 @@ pub fn delete_folder(vault_dir: &Path, folder_id: Uuid) -> AppResult<()> {
     let mut doomed_folders = vec![folder_id];
     loop {
         let before = doomed_folders.len();
-        for folder in &metadata.folders {
+        for folder in &content.folders {
             if let Some(parent) = folder.parent_id {
                 if doomed_folders.contains(&parent) && !doomed_folders.contains(&folder.id) {
                     doomed_folders.push(folder.id);
@@ -560,7 +622,7 @@ pub fn delete_folder(vault_dir: &Path, folder_id: Uuid) -> AppResult<()> {
         }
     }
 
-    let doomed_files: Vec<Uuid> = metadata
+    let doomed_files: Vec<Uuid> = content
         .files
         .iter()
         .filter(|f| f.parent_id.is_some_and(|p| doomed_folders.contains(&p)))
@@ -576,11 +638,11 @@ pub fn delete_folder(vault_dir: &Path, folder_id: Uuid) -> AppResult<()> {
         }
     }
 
-    metadata
+    content
         .files
         .retain(|f| !f.parent_id.is_some_and(|p| doomed_folders.contains(&p)));
-    metadata.folders.retain(|f| !doomed_folders.contains(&f.id));
-    save_metadata(vault_dir, &metadata)
+    content.folders.retain(|f| !doomed_folders.contains(&f.id));
+    write_content(vault_dir, &mut metadata, dek, &content)
 }
 
 /// Root of the OS temp directory under which decrypted exports live,
@@ -604,7 +666,8 @@ pub fn export_file(
     on_progress: impl FnMut(u64, u64),
 ) -> AppResult<PathBuf> {
     let metadata = load_metadata(vault_dir)?;
-    let entry = metadata
+    let content = load_content(&metadata, dek)?;
+    let entry = content
         .files
         .iter()
         .find(|f| f.id == file_id)
@@ -634,7 +697,8 @@ pub fn export_file_to(
     on_progress: impl FnMut(u64, u64),
 ) -> AppResult<()> {
     let metadata = load_metadata(vault_dir)?;
-    if !metadata.files.iter().any(|f| f.id == file_id) {
+    let content = load_content(&metadata, dek)?;
+    if !content.files.iter().any(|f| f.id == file_id) {
         return Err(AppError::FileNotFound);
     }
     crypto::decrypt_file(
@@ -979,7 +1043,7 @@ mod tests {
         assert_eq!(fs::read(&exported).unwrap(), b"hello vault");
         let _ = wipe_temp_exports(metadata.id);
 
-        remove_file(&vault_dir, entry.id).unwrap();
+        remove_file(&vault_dir, &dek, entry.id).unwrap();
         assert!(matches!(
             export_file(&vault_dir, &dek, entry.id, |_, _| {}),
             Err(AppError::FileNotFound)
@@ -997,8 +1061,8 @@ mod tests {
         source.write_all(b"hello vault").unwrap();
         let entry = add_file(&vault_dir, &dek, source.path(), None, |_, _| {}).unwrap();
 
-        rename_file(&vault_dir, entry.id, "nouveau-nom.txt").unwrap();
-        let files = load_metadata(&vault_dir).unwrap().files;
+        rename_file(&vault_dir, &dek, entry.id, "nouveau-nom.txt").unwrap();
+        let files = list_files(&vault_dir, &dek).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, "nouveau-nom.txt");
         assert_eq!(files[0].id, entry.id);
@@ -1007,7 +1071,7 @@ mod tests {
         assert_eq!(fs::read(&exported).unwrap(), b"hello vault");
 
         assert!(matches!(
-            rename_file(&vault_dir, Uuid::new_v4(), "x"),
+            rename_file(&vault_dir, &dek, Uuid::new_v4(), "x"),
             Err(AppError::FileNotFound)
         ));
     }
@@ -1091,15 +1155,16 @@ mod tests {
         let (_root, app_data_dir, location) = fresh_dirs();
         let (_metadata, vault_dir) =
             create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
 
-        let root_folder = create_folder(&vault_dir, None, "Documents").unwrap();
+        let root_folder = create_folder(&vault_dir, &dek, None, "Documents").unwrap();
         assert_eq!(root_folder.parent_id, None);
 
-        let nested = create_folder(&vault_dir, Some(root_folder.id), "Factures").unwrap();
+        let nested = create_folder(&vault_dir, &dek, Some(root_folder.id), "Factures").unwrap();
         assert_eq!(nested.parent_id, Some(root_folder.id));
 
         assert!(matches!(
-            create_folder(&vault_dir, Some(Uuid::new_v4()), "Orphelin"),
+            create_folder(&vault_dir, &dek, Some(Uuid::new_v4()), "Orphelin"),
             Err(AppError::FileNotFound)
         ));
     }
@@ -1109,16 +1174,17 @@ mod tests {
         let (_root, app_data_dir, location) = fresh_dirs();
         let (_metadata, vault_dir) =
             create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
-        let folder = create_folder(&vault_dir, None, "Ancien nom").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+        let folder = create_folder(&vault_dir, &dek, None, "Ancien nom").unwrap();
 
-        rename_folder(&vault_dir, folder.id, "Nouveau nom").unwrap();
-        let folders = load_metadata(&vault_dir).unwrap().folders;
+        rename_folder(&vault_dir, &dek, folder.id, "Nouveau nom").unwrap();
+        let folders = list_folders(&vault_dir, &dek).unwrap();
         assert_eq!(folders.len(), 1);
         assert_eq!(folders[0].name, "Nouveau nom");
         assert_eq!(folders[0].id, folder.id);
 
         assert!(matches!(
-            rename_folder(&vault_dir, Uuid::new_v4(), "x"),
+            rename_folder(&vault_dir, &dek, Uuid::new_v4(), "x"),
             Err(AppError::FileNotFound)
         ));
     }
@@ -1130,9 +1196,9 @@ mod tests {
             create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
         let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
 
-        let parent = create_folder(&vault_dir, None, "Parent").unwrap();
-        let child = create_folder(&vault_dir, Some(parent.id), "Enfant").unwrap();
-        let unrelated = create_folder(&vault_dir, None, "Sans lien").unwrap();
+        let parent = create_folder(&vault_dir, &dek, None, "Parent").unwrap();
+        let child = create_folder(&vault_dir, &dek, Some(parent.id), "Enfant").unwrap();
+        let unrelated = create_folder(&vault_dir, &dek, None, "Sans lien").unwrap();
 
         let mut in_parent = tempfile::NamedTempFile::new().unwrap();
         in_parent.write_all(b"dans le parent").unwrap();
@@ -1147,15 +1213,14 @@ mod tests {
         let file_in_unrelated =
             add_file(&vault_dir, &dek, in_unrelated.path(), Some(unrelated.id), |_, _| {}).unwrap();
 
-        delete_folder(&vault_dir, parent.id).unwrap();
+        delete_folder(&vault_dir, &dek, parent.id).unwrap();
 
-        let metadata = load_metadata(&vault_dir).unwrap();
-        let folder_ids: Vec<Uuid> = metadata.folders.iter().map(|f| f.id).collect();
+        let folder_ids: Vec<Uuid> = list_folders(&vault_dir, &dek).unwrap().iter().map(|f| f.id).collect();
         assert!(!folder_ids.contains(&parent.id));
         assert!(!folder_ids.contains(&child.id));
         assert!(folder_ids.contains(&unrelated.id));
 
-        let file_ids: Vec<Uuid> = metadata.files.iter().map(|f| f.id).collect();
+        let file_ids: Vec<Uuid> = list_files(&vault_dir, &dek).unwrap().iter().map(|f| f.id).collect();
         assert!(!file_ids.contains(&file_in_parent.id));
         assert!(!file_ids.contains(&file_in_child.id));
         assert!(file_ids.contains(&file_in_unrelated.id));
@@ -1179,6 +1244,34 @@ mod tests {
         assert!(matches!(
             add_file(&vault_dir, &dek, source.path(), Some(Uuid::new_v4()), |_, _| {}),
             Err(AppError::FileNotFound)
+        ));
+    }
+
+    /// The whole point of `content_encrypted`: a vault folder copied off the
+    /// machine, or read directly with a text editor, must not reveal a
+    /// single file or folder name — only the app, with the master password,
+    /// can decrypt them.
+    #[test]
+    fn vault_json_on_disk_never_contains_plaintext_file_or_folder_names() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Confidentiel", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"contenu").unwrap();
+        add_file(&vault_dir, &dek, source.path(), None, |_, _| {}).unwrap();
+        create_folder(&vault_dir, &dek, None, "un-nom-de-dossier-tres-identifiable").unwrap();
+
+        let raw = fs::read_to_string(metadata_path(&vault_dir)).unwrap();
+        assert!(!raw.contains("un-nom-de-dossier-tres-identifiable"));
+        assert!(!raw.to_lowercase().contains("contenu"));
+
+        // A wrong password must not be able to decrypt the content blob
+        // either — same guarantee as everything else wrapped by the DEK.
+        assert!(matches!(
+            unlock(&vault_dir, "un mauvais mot de passe"),
+            Err(AppError::WrongPassword)
         ));
     }
 }

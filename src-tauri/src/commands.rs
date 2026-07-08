@@ -163,7 +163,6 @@ pub fn create_vault(
         name: metadata.name,
         path,
         totp_enabled: metadata.totp_enabled,
-        file_count: 0,
         created_at: metadata.created_at,
     })
 }
@@ -323,9 +322,9 @@ pub fn regenerate_recovery_codes(
 
 #[tauri::command]
 pub fn list_files(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> AppResult<Vec<vault::FileEntry>> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    Ok(vault::load_metadata(&vault_dir)?.files)
+    vault::list_files(&vault_dir, &dek)
 }
 
 #[tauri::command]
@@ -351,9 +350,9 @@ pub fn add_file(
 
 #[tauri::command]
 pub fn list_folders(state: State<AppState>, app: AppHandle, vault_id: Uuid) -> AppResult<Vec<vault::Folder>> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    Ok(vault::load_metadata(&vault_dir)?.folders)
+    vault::list_folders(&vault_dir, &dek)
 }
 
 #[tauri::command]
@@ -364,12 +363,12 @@ pub fn create_folder(
     parent_id: Option<Uuid>,
     name: String,
 ) -> AppResult<vault::Folder> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     if name.trim().is_empty() {
         return Err(AppError::Crypto("le nom du dossier ne peut pas etre vide".into()));
     }
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    vault::create_folder(&vault_dir, parent_id, name.trim())
+    vault::create_folder(&vault_dir, &dek, parent_id, name.trim())
 }
 
 #[tauri::command]
@@ -380,19 +379,19 @@ pub fn rename_folder(
     folder_id: Uuid,
     new_name: String,
 ) -> AppResult<()> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     if new_name.trim().is_empty() {
         return Err(AppError::Crypto("le nom du dossier ne peut pas etre vide".into()));
     }
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    vault::rename_folder(&vault_dir, folder_id, new_name.trim())
+    vault::rename_folder(&vault_dir, &dek, folder_id, new_name.trim())
 }
 
 #[tauri::command]
 pub fn delete_folder(app: AppHandle, state: State<AppState>, vault_id: Uuid, folder_id: Uuid) -> AppResult<()> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    vault::delete_folder(&vault_dir, folder_id)
+    vault::delete_folder(&vault_dir, &dek, folder_id)
 }
 
 #[tauri::command]
@@ -403,12 +402,12 @@ pub fn rename_file(
     file_id: Uuid,
     new_name: String,
 ) -> AppResult<()> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     if new_name.trim().is_empty() {
         return Err(AppError::Crypto("le nom du fichier ne peut pas etre vide".into()));
     }
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    vault::rename_file(&vault_dir, file_id, new_name.trim())
+    vault::rename_file(&vault_dir, &dek, file_id, new_name.trim())
 }
 
 #[tauri::command]
@@ -418,9 +417,9 @@ pub fn remove_file(
     vault_id: Uuid,
     file_id: Uuid,
 ) -> AppResult<()> {
-    state.get_active_dek(vault_id)?;
+    let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    vault::remove_file(&vault_dir, file_id)
+    vault::remove_file(&vault_dir, &dek, file_id)
 }
 
 /// Decrypts a file into an app-managed temp directory (never a location the
@@ -437,8 +436,7 @@ pub fn export_file(
 ) -> AppResult<String> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    let file_name = vault::load_metadata(&vault_dir)?
-        .files
+    let file_name = vault::list_files(&vault_dir, &dek)?
         .into_iter()
         .find(|f| f.id == file_id)
         .map(|f| f.name)
@@ -463,8 +461,7 @@ pub fn export_file_to(
 ) -> AppResult<()> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    let file_name = vault::load_metadata(&vault_dir)?
-        .files
+    let file_name = vault::list_files(&vault_dir, &dek)?
         .into_iter()
         .find(|f| f.id == file_id)
         .map(|f| f.name)
@@ -488,9 +485,8 @@ pub fn preview_file(
 ) -> AppResult<FilePreview> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
-    let metadata = vault::load_metadata(&vault_dir)?;
-    let entry = metadata
-        .files
+    let files = vault::list_files(&vault_dir, &dek)?;
+    let entry = files
         .iter()
         .find(|f| f.id == file_id)
         .ok_or(AppError::FileNotFound)?;
@@ -570,7 +566,6 @@ pub fn import_vault_backup(
         name: metadata.name,
         path,
         totp_enabled: metadata.totp_enabled,
-        file_count: metadata.files.len(),
         created_at: metadata.created_at,
     })
 }

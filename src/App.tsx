@@ -178,7 +178,6 @@ function App() {
                     <div className="vault-icon">🔒</div>
                     <h3>{vault.name}</h3>
                     <div className="meta">
-                      <span>{vault.fileCount} fichier(s)</span>
                       {vault.totpEnabled && <span className="badge">2FA</span>}
                     </div>
                   </button>

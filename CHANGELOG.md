@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.16.0] - 2026-07-08
+
+### Securite
+- Chiffrement des metadonnees d'un coffre : les noms de fichiers, noms de dossiers, tailles, dates d'ajout et la structure des sous-dossiers etaient jusqu'ici stockes en clair dans `vault.json` (seule leur integrite etait protegee, pas leur confidentialite). Ils sont desormais regroupes et chiffres en un seul bloc AES-256-GCM sous la DEK : un coffre copie ou lu directement (hors de l'application, sans le mot de passe) ne revele plus rien de son contenu, pas meme le nombre de fichiers qu'il contient. Consequence directe : le nombre de fichiers n'est plus affiche sur la carte d'un coffre avant deverrouillage, puisque cette information n'est plus lisible sans la DEK.
+
 ## [0.15.1] - 2026-07-08
 
 ### Corrige

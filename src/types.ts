@@ -17,7 +17,6 @@ export interface VaultSummary {
   name: string;
   path: string;
   totpEnabled: boolean;
-  fileCount: number;
   createdAt: string;
 }
 
