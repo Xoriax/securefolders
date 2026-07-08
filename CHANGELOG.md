@@ -4,6 +4,16 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.9.0] - 2026-07-08
+
+### Ajoute
+- Export de fichier reecrit : au lieu de dechiffrer dans un dossier temporaire puis d'ouvrir avec l'application par defaut du systeme, l'export ouvre desormais un dialogue "Enregistrer sous..." et dechiffre directement a l'emplacement choisi par l'utilisateur.
+- Raccourci de lancement : chaque coffre recoit un raccourci Windows (`Ouvrir avec SecureFolders.lnk`) depose a la racine de son dossier, qui relance l'application directement sur ce coffre. Un bouton dans les parametres du coffre permet de (re)creer ce raccourci pour les coffres crees avant cette version.
+- Protection contre la suppression accidentelle : un coffre nouvellement cree ne peut plus etre supprime (lui ou son contenu) depuis l'Explorateur Windows ou tout autre processus externe — seule l'application peut le faire, via une permission NTFS explicite refusant la suppression, levee ponctuellement par l'application le temps de ses propres operations de suppression. Cette protection ne remplace pas un controle d'acces reel : le proprietaire du fichier peut toujours retirer cette regle lui-meme (Proprietes > Securite ou `icacls`), elle vise seulement a eviter un `Suppr` malheureux dans l'Explorateur.
+
+### Retire
+- Le plugin `tauri-plugin-opener`, devenu inutile une fois l'export bascule sur le dialogue "Enregistrer sous...".
+
 ## [0.8.0] - 2026-07-04
 
 ### Ajoute
