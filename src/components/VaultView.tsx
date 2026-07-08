@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../api";
+import { formatSize, sortFiles, type SortKey } from "../fileListUtils";
 import type { FileEntry, TransferProgress, VaultSummary } from "../types";
 import { TotpSetupModal } from "./TotpSetupModal";
 import { VaultSettingsModal } from "./VaultSettingsModal";
@@ -13,28 +14,6 @@ interface Props {
   onLocked: () => void;
   onDeleted: () => void;
   onVaultUpdated: (vault: VaultSummary) => void;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
-}
-
-type SortKey = "name-asc" | "name-desc" | "date-desc" | "size-desc";
-
-function sortFiles(files: FileEntry[], sortKey: SortKey): FileEntry[] {
-  const sorted = [...files];
-  switch (sortKey) {
-    case "name-asc":
-      return sorted.sort((a, b) => a.name.localeCompare(b.name));
-    case "name-desc":
-      return sorted.sort((a, b) => b.name.localeCompare(a.name));
-    case "date-desc":
-      return sorted.sort((a, b) => b.addedAt.localeCompare(a.addedAt));
-    case "size-desc":
-      return sorted.sort((a, b) => b.size - a.size);
-  }
 }
 
 export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props) {
