@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.11.0] - 2026-07-08
+
+### Ajoute
+- Suite de tests frontend (Vitest + Testing Library), executee automatiquement en CI aux cotes des tests Rust : encodage/effacement des mots de passe, tri de la liste de fichiers, et un test de non-regression pour le bug de fermeture de modale corrige en 0.10.0 (selection de texte interpretee comme un clic sur le fond).
+
 ## [0.10.0] - 2026-07-08
 
 ### Ajoute

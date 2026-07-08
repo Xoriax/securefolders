@@ -25,6 +25,7 @@ Prérequis :
 npm install
 npm run tauri dev     # lancer en mode développement
 npm run tauri build   # générer les installeurs .exe et .msi
+npm test              # lancer les tests unitaires du frontend
 cd src-tauri && cargo test   # lancer les tests unitaires du backend
 ```
 
