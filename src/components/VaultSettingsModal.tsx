@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api";
+import { encodePassword, wipe } from "../secureBytes";
 import type { VaultSummary } from "../types";
+import { ModalOverlay } from "./ModalOverlay";
 import { RecoveryCodesDisplay } from "./RecoveryCodesDisplay";
 
 interface Props {
@@ -66,15 +68,19 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
       return;
     }
     setBusy(true);
+    const oldBytes = encodePassword(oldPassword);
+    const newBytes = encodePassword(newPassword);
+    setOldPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
     try {
-      await api.changeMasterPassword(vault.id, oldPassword, newPassword);
-      setOldPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
+      await api.changeMasterPassword(vault.id, oldBytes, newBytes);
       setMessage("Mot de passe maitre modifie.");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
+      wipe(oldBytes);
+      wipe(newBytes);
       setBusy(false);
     }
   }
@@ -121,7 +127,7 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
   }
 
   return (
-    <div className="modal-overlay" onClick={newRecoveryCodes ? undefined : onClose}>
+    <ModalOverlay onClose={newRecoveryCodes ? undefined : onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 440 }}>
         <h2>Parametres du coffre</h2>
 
@@ -249,6 +255,6 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
         </>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

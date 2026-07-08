@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { TotpSetup } from "../types";
+import { ModalOverlay } from "./ModalOverlay";
 import { RecoveryCodesDisplay } from "./RecoveryCodesDisplay";
 
 interface Props {
@@ -35,7 +36,7 @@ export function TotpSetupModal({ vaultId, onClose, onEnabled }: Props) {
   }
 
   return (
-    <div className="modal-overlay" onClick={recoveryCodes ? undefined : onClose}>
+    <ModalOverlay onClose={recoveryCodes ? undefined : onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Activer la double authentification</h2>
         {recoveryCodes ? (
@@ -86,6 +87,6 @@ export function TotpSetupModal({ vaultId, onClose, onEnabled }: Props) {
           </form>
         )}
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

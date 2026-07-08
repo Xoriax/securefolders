@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, errorMessage } from "../api";
+import { encodePassword, wipe } from "../secureBytes";
 import type { VaultSummary } from "../types";
 
 interface Props {
@@ -20,8 +21,10 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
     e.preventDefault();
     setError(null);
     setBusy(true);
+    const bytes = encodePassword(password);
+    setPassword("");
     try {
-      const result = await api.unlockVault(vault.id, password);
+      const result = await api.unlockVault(vault.id, bytes);
       if (result.requiresTotp) {
         setNeedsTotp(true);
       } else {
@@ -30,6 +33,7 @@ export function UnlockScreen({ vault, onUnlocked, onCancel }: Props) {
     } catch (err) {
       setError(errorMessage(err));
     } finally {
+      wipe(bytes);
       setBusy(false);
     }
   }

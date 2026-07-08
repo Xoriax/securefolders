@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../api";
+import { encodePassword, wipe } from "../secureBytes";
 import type { VaultSummary } from "../types";
+import { ModalOverlay } from "./ModalOverlay";
 
 interface Props {
   onClose: () => void;
@@ -40,23 +42,27 @@ export function CreateVaultModal({ onClose, onCreated }: Props) {
     }
 
     setBusy(true);
+    const bytes = encodePassword(password);
+    setPassword("");
+    setConfirmPassword("");
     try {
-      const vault = await api.createVault(name.trim(), location, password);
+      const vault = await api.createVault(name.trim(), location, bytes);
       if (enableTotp) {
         // A freshly created vault has no 2FA yet, so this always succeeds
         // without a code and opens the session `setup_totp` needs next.
-        await api.unlockVault(vault.id, password);
+        await api.unlockVault(vault.id, bytes);
       }
       onCreated(vault, enableTotp);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
+      wipe(bytes);
       setBusy(false);
     }
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Creer un coffre securise</h2>
         <div className="warning-banner">
@@ -126,6 +132,6 @@ export function CreateVaultModal({ onClose, onCreated }: Props) {
           </div>
         </form>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }

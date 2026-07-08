@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { api, errorMessage } from "../api";
 import type { FileEntry, FilePreview } from "../types";
+import { ModalOverlay } from "./ModalOverlay";
 
 interface Props {
   vaultId: string;
@@ -21,7 +22,7 @@ export function FilePreviewModal({ vaultId, file, onClose }: Props) {
   }, [vaultId, file.id]);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <ModalOverlay onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 560 }}>
         <h2>{file.name}</h2>
 
@@ -68,6 +69,6 @@ export function FilePreviewModal({ vaultId, file, onClose }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 }
