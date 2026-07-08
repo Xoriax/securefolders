@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { api, errorMessage } from "./api";
+import { wasLikelySuspended } from "./suspendDetector";
 import type { VaultSummary } from "./types";
 import { CreateVaultModal } from "./components/CreateVaultModal";
 import { UnlockScreen } from "./components/UnlockScreen";
@@ -47,6 +48,27 @@ function App() {
         setError(errorMessage(err));
       }
     })();
+  }, []);
+
+  // The per-vault inactivity timer alone misses one case: a laptop closed
+  // mid-session stays "unlocked" until the configured delay elapses after
+  // it's reopened, even though real time moved on far past that delay
+  // while asleep. A polling gap much larger than the interval itself can
+  // only happen if the OS suspended the process — see suspendDetector.ts.
+  useEffect(() => {
+    let lastTick = Date.now();
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - lastTick;
+      lastTick = now;
+      if (wasLikelySuspended(elapsed)) {
+        api.lockAllVaults().then(() => {
+          setView({ kind: "list" });
+          refreshVaults();
+        });
+      }
+    }, 10_000);
+    return () => clearInterval(interval);
   }, []);
 
   function openVault(vault: VaultSummary) {
