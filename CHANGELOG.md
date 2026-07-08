@@ -4,6 +4,19 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.10.0] - 2026-07-08
+
+### Ajoute
+- Renommer un fichier a l'interieur d'un coffre.
+- Recherche et tri (nom, date d'ajout, taille) dans la liste de fichiers d'un coffre.
+- Lint (`oxlint`) execute automatiquement en CI a chaque push, en plus du build et des tests.
+
+### Securite
+- Les mots de passe (creation de coffre, deverrouillage, changement de mot de passe) transitent desormais en octets bruts plutot qu'en chaine JS, et sont effaces de la memoire de l'interface immediatement apres l'appel — reduit la fenetre d'exposition sans pretendre l'eliminer : une chaine JS est de toute facon immuable et ne peut pas etre reellement effacee comme cote Rust (`zeroize`). Le mot de passe est aussi desormais enveloppe dans un `Zeroizing<String>` cote Rust, la ou il ne l'etait pas avant.
+
+### Corrige
+- Les fenetres modales (parametres du coffre, creation, activation 2FA, apercu) se fermaient par erreur si l'utilisateur commençait a surligner du texte a l'interieur puis relachait la souris en dehors de la fenetre — le clic de fin de selection etait interprete comme un clic sur le fond pour fermer la modale.
+
 ## [0.9.0] - 2026-07-08
 
 ### Ajoute
