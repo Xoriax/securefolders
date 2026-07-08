@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.15.0] - 2026-07-08
+
+### Ajoute
+- Verification manuelle des mises a jour (Parametres > "Verifier les mises a jour"), telechargement et installation en un clic. Aucune verification automatique en arriere-plan : le seul appel reseau que fait l'application se produit quand l'utilisateur clique explicitement sur ce bouton — les coffres et leur contenu ne sont jamais concernes. Les builds publies sur GitHub Releases sont desormais signes (cle privee stockee comme secret GitHub Actions, jamais dans le depot) pour que l'updater puisse verifier leur authenticite avant installation.
+
 ## [0.14.0] - 2026-07-08
 
 ### Ajoute
