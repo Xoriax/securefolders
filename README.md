@@ -60,7 +60,7 @@ src-tauri/src/
 
 ### Commandes Tauri disponibles
 
-`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `unlock_with_recovery_code`, `regenerate_recovery_codes`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `rename_file`, `remove_file`, `export_file`, `export_file_to`, `preview_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`, `get_auto_lock_seconds`, `set_auto_lock_seconds`, `get_launch_target`, `create_vault_launcher`.
+`list_vaults`, `create_vault`, `unlock_vault`, `verify_totp`, `unlock_with_recovery_code`, `regenerate_recovery_codes`, `lock_vault`, `lock_all_vaults`, `setup_totp`, `confirm_totp`, `list_files`, `add_file`, `rename_file`, `remove_file`, `export_file`, `export_file_to`, `preview_file`, `is_vault_unlocked`, `delete_vault`, `rename_vault`, `change_master_password`, `disable_totp`, `get_auto_lock_seconds`, `set_auto_lock_seconds`, `get_launch_target`, `create_vault_launcher`, `export_vault_backup`, `import_vault_backup`.
 
 ### Modèle de chiffrement
 
@@ -77,6 +77,7 @@ src-tauri/src/
 11. Les tentatives de déverrouillage (mot de passe, code TOTP, code de récupération) sont limitées en fréquence : passé 4 essais infructueux, chaque nouvel échec verrouille le coffre un peu plus longtemps (5 s, 10 s, 20 s, ... jusqu'à 5 minutes), remis à zéro dès qu'une tentative aboutit. Ce compteur vit en mémoire, pas sur disque : il protège contre le devinage via l'interface, pas contre un attaquant qui copierait le dossier du coffre pour attaquer Argon2id hors ligne — rien côté application ne peut empêcher cela.
 12. Le dossier d'un coffre nouvellement créé refuse la suppression (permission NTFS explicite) depuis l'Explorateur ou tout autre processus externe ; seule l'application peut supprimer un fichier ou le coffre entier, en levant cette permission juste avant sa propre opération de suppression.
 13. Chaque coffre reçoit un raccourci Windows (`Ouvrir avec SecureFolders.lnk`) déposé dans son dossier, qui relance l'application directement dessus — Windows n'offrant aucun moyen natif de faire réagir un double-clic sur le dossier lui-même.
+14. La sauvegarde d'un coffre regroupe `vault.json` et les fichiers déjà chiffrés dans une seule archive .zip, sans déchiffrement ni chiffrement supplémentaire — l'archive n'a pas besoin de son propre mot de passe puisque son contenu l'est déjà. Le raccourci de lancement et la protection anti-suppression, spécifiques à la machine, ne sont pas inclus ; ils sont recréés à l'import.
 
 ## Limites de sécurité connues
 

@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.12.0] - 2026-07-08
+
+### Ajoute
+- Sauvegarde complete d'un coffre dans une seule archive .zip (parametres du coffre) et import de cette sauvegarde sur une autre machine (ou le meme, dans un autre dossier) depuis l'ecran d'accueil. Les fichiers sont deja chiffres individuellement (AES-256-GCM) : l'archive elle-meme n'ajoute pas de mot de passe supplementaire, elle regroupe juste `vault.json` et les fichiers chiffres en un seul fichier transportable. Le raccourci de lancement et la protection anti-suppression, specifiques a la machine, sont recrees automatiquement a l'import plutot qu'inclus dans l'archive. Importer une sauvegarde d'un coffre deja connu de cette machine est refuse, pour ne pas dupliquer une entree d'index pour le meme identifiant.
+
 ## [0.11.0] - 2026-07-08
 
 ### Ajoute
