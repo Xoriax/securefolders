@@ -53,6 +53,10 @@ pub struct AppState {
     /// startup (see `settings::load_auto_lock_secs`) and updated live when
     /// the user changes it, with no need to restart the app.
     auto_lock_timeout: Mutex<Duration>,
+    /// Vault folder path passed as a command-line argument at launch (see
+    /// `launcher::create_launcher`), if any. Read once by the frontend on
+    /// startup to jump straight to that vault instead of the vault list.
+    launch_target: Mutex<Option<String>>,
 }
 
 impl Default for AppState {
@@ -63,6 +67,7 @@ impl Default for AppState {
             pending_totp_setup: Mutex::new(HashMap::new()),
             attempts: Mutex::new(HashMap::new()),
             auto_lock_timeout: Mutex::new(Duration::from_secs(DEFAULT_AUTO_LOCK_SECS)),
+            launch_target: Mutex::new(None),
         }
     }
 }
@@ -168,6 +173,16 @@ impl AppState {
     /// `settings::save_auto_lock_secs` so it survives an app restart.
     pub fn set_auto_lock_timeout(&self, timeout: Duration) {
         *self.auto_lock_timeout.lock().unwrap() = timeout;
+    }
+
+    pub fn set_launch_target(&self, path: String) {
+        *self.launch_target.lock().unwrap() = Some(path);
+    }
+
+    /// Consumes the launch target so it's only acted on once, even if the
+    /// frontend re-mounts (e.g. a reload during development).
+    pub fn take_launch_target(&self) -> Option<String> {
+        self.launch_target.lock().unwrap().take()
     }
 
     pub fn lock_vault(&self, vault_id: Uuid) {

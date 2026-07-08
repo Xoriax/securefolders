@@ -94,6 +94,20 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
     }
   }
 
+  async function handleCreateLauncher() {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      await api.createVaultLauncher(vault.id);
+      setMessage("Raccourci cree dans le dossier du coffre.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     setError(null);
     setBusy(true);
@@ -186,6 +200,18 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
             </div>
           </div>
         )}
+
+        <div className="field" style={{ marginTop: 18 }}>
+          <label>Raccourci de lancement</label>
+          <p style={{ fontSize: 12, color: "var(--text-dim)", margin: "0 0 8px" }}>
+            Depose un raccourci dans le dossier du coffre pour l'ouvrir
+            directement depuis l'Explorateur, sans passer par cette
+            application d'abord.
+          </p>
+          <button type="button" className="btn" onClick={handleCreateLauncher} disabled={busy}>
+            Creer le raccourci
+          </button>
+        </div>
 
         {message && <p style={{ fontSize: 13, color: "var(--success)" }}>{message}</p>}
         {error && <div className="error-text">{error}</div>}
