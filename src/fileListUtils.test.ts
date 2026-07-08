@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { sortFiles } from "./fileListUtils";
-import type { FileEntry } from "./types";
+import { breadcrumbPath, sortFiles } from "./fileListUtils";
+import type { FileEntry, Folder } from "./types";
 
 function file(overrides: Partial<FileEntry>): FileEntry {
   return {
@@ -8,6 +8,16 @@ function file(overrides: Partial<FileEntry>): FileEntry {
     name: "file.txt",
     size: 0,
     addedAt: "2026-01-01T00:00:00Z",
+    parentId: null,
+    ...overrides,
+  };
+}
+
+function folder(overrides: Partial<Folder>): Folder {
+  return {
+    id: "id",
+    name: "folder",
+    parentId: null,
     ...overrides,
   };
 }
@@ -47,5 +57,32 @@ describe("sortFiles", () => {
     const original = [...files];
     sortFiles(files, "name-asc");
     expect(files).toEqual(original);
+  });
+});
+
+describe("breadcrumbPath", () => {
+  const folders: Folder[] = [
+    folder({ id: "root-child", name: "Documents", parentId: null }),
+    folder({ id: "nested", name: "Factures", parentId: "root-child" }),
+    folder({ id: "unrelated", name: "Photos", parentId: null }),
+  ];
+
+  it("is empty at the vault's root", () => {
+    expect(breadcrumbPath(folders, null)).toEqual([]);
+  });
+
+  it("has one entry for a top-level folder", () => {
+    expect(breadcrumbPath(folders, "root-child").map((f) => f.name)).toEqual(["Documents"]);
+  });
+
+  it("walks up from a nested folder to the root", () => {
+    expect(breadcrumbPath(folders, "nested").map((f) => f.name)).toEqual([
+      "Documents",
+      "Factures",
+    ]);
+  });
+
+  it("stops without throwing if a folder id is unknown", () => {
+    expect(breadcrumbPath(folders, "does-not-exist")).toEqual([]);
   });
 });

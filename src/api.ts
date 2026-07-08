@@ -3,6 +3,7 @@ import type {
   ConfirmTotpResult,
   FileEntry,
   FilePreview,
+  Folder,
   TotpSetup,
   UnlockResult,
   VaultSummary,
@@ -40,11 +41,22 @@ export const api = {
 
   listFiles: (vaultId: string) => invoke<FileEntry[]>("list_files", { vaultId }),
 
-  addFile: (vaultId: string, sourcePath: string) =>
-    invoke<FileEntry>("add_file", { vaultId, sourcePath }),
+  addFile: (vaultId: string, sourcePath: string, parentId: string | null) =>
+    invoke<FileEntry>("add_file", { vaultId, sourcePath, parentId }),
 
   renameFile: (vaultId: string, fileId: string, newName: string) =>
     invoke<void>("rename_file", { vaultId, fileId, newName }),
+
+  listFolders: (vaultId: string) => invoke<Folder[]>("list_folders", { vaultId }),
+
+  createFolder: (vaultId: string, parentId: string | null, name: string) =>
+    invoke<Folder>("create_folder", { vaultId, parentId, name }),
+
+  renameFolder: (vaultId: string, folderId: string, newName: string) =>
+    invoke<void>("rename_folder", { vaultId, folderId, newName }),
+
+  deleteFolder: (vaultId: string, folderId: string) =>
+    invoke<void>("delete_folder", { vaultId, folderId }),
 
   removeFile: (vaultId: string, fileId: string) =>
     invoke<void>("remove_file", { vaultId, fileId }),

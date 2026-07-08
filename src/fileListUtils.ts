@@ -1,4 +1,4 @@
-import type { FileEntry } from "./types";
+import type { FileEntry, Folder } from "./types";
 
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} o`;
@@ -20,4 +20,17 @@ export function sortFiles(files: FileEntry[], sortKey: SortKey): FileEntry[] {
     case "size-desc":
       return sorted.sort((a, b) => b.size - a.size);
   }
+}
+
+/** Folders from the vault's root down to `currentFolderId`, for a breadcrumb. */
+export function breadcrumbPath(folders: Folder[], currentFolderId: string | null): Folder[] {
+  const path: Folder[] = [];
+  let id = currentFolderId;
+  while (id) {
+    const folder = folders.find((f) => f.id === id);
+    if (!folder) break;
+    path.unshift(folder);
+    id = folder.parentId;
+  }
+  return path;
 }

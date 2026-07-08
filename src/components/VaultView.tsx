@@ -3,8 +3,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../api";
-import { formatSize, sortFiles, type SortKey } from "../fileListUtils";
-import type { FileEntry, TransferProgress, VaultSummary } from "../types";
+import { breadcrumbPath, formatSize, sortFiles, type SortKey } from "../fileListUtils";
+import type { FileEntry, Folder, TransferProgress, VaultSummary } from "../types";
 import { TotpSetupModal } from "./TotpSetupModal";
 import { VaultSettingsModal } from "./VaultSettingsModal";
 import { FilePreviewModal } from "./FilePreviewModal";
@@ -18,6 +18,8 @@ interface Props {
 
 export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props) {
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showTotpSetup, setShowTotpSetup] = useState(false);
@@ -28,20 +30,41 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [renamingFileId, setRenamingFileId] = useState<string | null>(null);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+
+  const breadcrumb = useMemo(
+    () => breadcrumbPath(folders, currentFolderId),
+    [folders, currentFolderId],
+  );
+
+  const visibleFolders = useMemo(
+    () =>
+      [...folders]
+        .filter((f) => f.parentId === currentFolderId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [folders, currentFolderId],
+  );
 
   const visibleFiles = useMemo(() => {
+    const inFolder = files.filter((f) => f.parentId === currentFolderId);
     const query = searchQuery.trim().toLowerCase();
     const filtered = query
-      ? files.filter((f) => f.name.toLowerCase().includes(query))
-      : files;
+      ? inFolder.filter((f) => f.name.toLowerCase().includes(query))
+      : inFolder;
     return sortFiles(filtered, sortKey);
-  }, [files, searchQuery, sortKey]);
+  }, [files, currentFolderId, searchQuery, sortKey]);
 
   const refresh = useCallback(() => {
     api
       .listFiles(vault.id)
       .then(setFiles)
+      .catch((err) => setError(errorMessage(err)));
+    api
+      .listFolders(vault.id)
+      .then(setFolders)
       .catch((err) => setError(errorMessage(err)));
   }, [vault.id]);
 
@@ -85,7 +108,7 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
         setDragging(false);
         for (const path of event.payload.paths) {
           try {
-            await api.addFile(vault.id, path);
+            await api.addFile(vault.id, path, currentFolderId);
           } catch (err) {
             setError(errorMessage(err));
           }
@@ -98,7 +121,7 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, [vault.id, refresh]);
+  }, [vault.id, currentFolderId, refresh]);
 
   async function handleLock() {
     await api.lockVault(vault.id);
@@ -125,6 +148,49 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
     if (!newName) return;
     try {
       await api.renameFile(vault.id, fileId, newName);
+      refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleCreateFolder(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newFolderName.trim();
+    setShowNewFolder(false);
+    setNewFolderName("");
+    if (!name) return;
+    try {
+      await api.createFolder(vault.id, currentFolderId, name);
+      refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  function startFolderRename(folder: Folder) {
+    setRenamingFolderId(folder.id);
+    setRenameValue(folder.name);
+  }
+
+  async function commitFolderRename(folderId: string) {
+    const newName = renameValue.trim();
+    setRenamingFolderId(null);
+    if (!newName) return;
+    try {
+      await api.renameFolder(vault.id, folderId, newName);
+      refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleDeleteFolder(folder: Folder) {
+    if (!window.confirm(`Supprimer le dossier "${folder.name}" et tout son contenu ?`)) {
+      return;
+    }
+    try {
+      await api.deleteFolder(vault.id, folder.id);
       refresh();
     } catch (err) {
       setError(errorMessage(err));
@@ -192,8 +258,85 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
 
       {error && <div className="error-text">{error}</div>}
 
-      {files.length === 0 ? (
+      <div className="breadcrumb">
+        <button
+          className={`breadcrumb-item ${currentFolderId === null ? "active" : ""}`}
+          onClick={() => setCurrentFolderId(null)}
+        >
+          Racine
+        </button>
+        {breadcrumb.map((folder) => (
+          <span key={folder.id}>
+            <span className="breadcrumb-sep">/</span>
+            <button
+              className={`breadcrumb-item ${currentFolderId === folder.id ? "active" : ""}`}
+              onClick={() => setCurrentFolderId(folder.id)}
+            >
+              {folder.name}
+            </button>
+          </span>
+        ))}
+        <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setShowNewFolder(true)}>
+          + Nouveau dossier
+        </button>
+      </div>
+
+      {showNewFolder && (
+        <form onSubmit={handleCreateFolder} className="field" style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            autoFocus
+            placeholder="Nom du dossier"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button type="submit" className="btn btn-primary">
+            Creer
+          </button>
+          <button type="button" className="btn" onClick={() => setShowNewFolder(false)}>
+            Annuler
+          </button>
+        </form>
+      )}
+
+      {visibleFolders.length > 0 && (
+        <div className="file-list" style={{ marginBottom: 12 }}>
+          {visibleFolders.map((folder) => (
+            <div className="file-row" key={folder.id}>
+              <div className="file-name">
+                <span>📁</span>
+                {renamingFolderId === folder.id ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => commitFolderRename(folder.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitFolderRename(folder.id);
+                      if (e.key === "Escape") setRenamingFolderId(null);
+                    }}
+                  />
+                ) : (
+                  <button className="link-button" onClick={() => setCurrentFolderId(folder.id)}>
+                    {folder.name}
+                  </button>
+                )}
+              </div>
+              <div className="row-actions">
+                <button onClick={() => startFolderRename(folder)}>Renommer</button>
+                <button onClick={() => handleDeleteFolder(folder)}>Supprimer</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {files.length === 0 && folders.length === 0 ? (
         <div className="empty-state">Ce coffre ne contient encore aucun fichier.</div>
+      ) : visibleFiles.length === 0 && visibleFolders.length === 0 ? (
+        <div className="empty-state">Ce dossier est vide.</div>
       ) : (
         <>
           <div className="file-list-toolbar">

@@ -356,6 +356,49 @@
   margin-bottom: 10px;
 }
 
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.breadcrumb-item {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.breadcrumb-item:hover {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.breadcrumb-item.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.breadcrumb-sep {
+  color: var(--text-dim);
+  margin: 0 2px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
 .file-list-toolbar input,
 .file-list-toolbar select {
   background: var(--bg-card);

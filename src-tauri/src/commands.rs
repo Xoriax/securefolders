@@ -334,6 +334,7 @@ pub fn add_file(
     state: State<AppState>,
     vault_id: Uuid,
     source_path: String,
+    parent_id: Option<Uuid>,
 ) -> AppResult<vault::FileEntry> {
     let dek = state.get_active_dek(vault_id)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
@@ -345,7 +346,53 @@ pub fn add_file(
         .to_string();
 
     let on_progress = progress_emitter(&app, vault_id, file_name, "import");
-    vault::add_file(&vault_dir, &dek, &source_path, on_progress)
+    vault::add_file(&vault_dir, &dek, &source_path, parent_id, on_progress)
+}
+
+#[tauri::command]
+pub fn list_folders(state: State<AppState>, app: AppHandle, vault_id: Uuid) -> AppResult<Vec<vault::Folder>> {
+    state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    Ok(vault::load_metadata(&vault_dir)?.folders)
+}
+
+#[tauri::command]
+pub fn create_folder(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    parent_id: Option<Uuid>,
+    name: String,
+) -> AppResult<vault::Folder> {
+    state.get_active_dek(vault_id)?;
+    if name.trim().is_empty() {
+        return Err(AppError::Crypto("le nom du dossier ne peut pas etre vide".into()));
+    }
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::create_folder(&vault_dir, parent_id, name.trim())
+}
+
+#[tauri::command]
+pub fn rename_folder(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    folder_id: Uuid,
+    new_name: String,
+) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    if new_name.trim().is_empty() {
+        return Err(AppError::Crypto("le nom du dossier ne peut pas etre vide".into()));
+    }
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::rename_folder(&vault_dir, folder_id, new_name.trim())
+}
+
+#[tauri::command]
+pub fn delete_folder(app: AppHandle, state: State<AppState>, vault_id: Uuid, folder_id: Uuid) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::delete_folder(&vault_dir, folder_id)
 }
 
 #[tauri::command]

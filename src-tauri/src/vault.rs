@@ -23,6 +23,22 @@ pub struct FileEntry {
     pub name: String,
     pub size: u64,
     pub added_at: DateTime<Utc>,
+    /// The folder this file lives in, or `None` for the vault's root.
+    /// Missing on vaults created before folders existed, which is
+    /// equivalent to root for all of them.
+    #[serde(default)]
+    pub parent_id: Option<Uuid>,
+}
+
+/// A folder inside a vault, purely organizational — it exists only in
+/// `vault.json`, not as a real directory on disk (every encrypted blob
+/// still lives flat in `files/`, named by its own UUID).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Folder {
+    pub id: Uuid,
+    pub name: String,
+    pub parent_id: Option<Uuid>,
 }
 
 /// A single-use TOTP recovery code. Only its SHA-256 hash is ever stored —
@@ -63,6 +79,8 @@ pub struct VaultMetadata {
     pub integrity_tag: Vec<u8>,
     pub created_at: DateTime<Utc>,
     pub files: Vec<FileEntry>,
+    #[serde(default)]
+    pub folders: Vec<Folder>,
 }
 
 /// Fields covered by `integrity_tag`. Kept separate from `VaultMetadata` so
@@ -205,6 +223,7 @@ pub fn create_vault(
         integrity_tag: Vec::new(),
         created_at: Utc::now(),
         files: Vec::new(),
+        folders: Vec::new(),
     };
     seal_integrity(&mut metadata, &dek);
     save_metadata(&vault_dir, &metadata)?;
@@ -417,9 +436,16 @@ pub fn add_file(
     vault_dir: &Path,
     dek: &VaultKey,
     source_path: &Path,
+    parent_id: Option<Uuid>,
     on_progress: impl FnMut(u64, u64),
 ) -> AppResult<FileEntry> {
     let mut metadata = load_metadata(vault_dir)?;
+
+    if let Some(parent) = parent_id {
+        if !metadata.folders.iter().any(|f| f.id == parent) {
+            return Err(AppError::FileNotFound);
+        }
+    }
 
     let name = source_path
         .file_name()
@@ -437,6 +463,7 @@ pub fn add_file(
         name,
         size,
         added_at: Utc::now(),
+        parent_id,
     };
     metadata.files.push(entry.clone());
     save_metadata(vault_dir, &metadata)?;
@@ -472,6 +499,87 @@ pub fn remove_file(vault_dir: &Path, file_id: Uuid) -> AppResult<()> {
         acl::allow_delete_once(&encrypted_path)?;
         fs::remove_file(encrypted_path)?;
     }
+    save_metadata(vault_dir, &metadata)
+}
+
+/// Creates a folder inside a vault, purely as metadata (see `Folder`) — no
+/// directory is created on disk. `parent_id` must reference an existing
+/// folder, or be `None` to create it at the vault's root.
+pub fn create_folder(vault_dir: &Path, parent_id: Option<Uuid>, name: &str) -> AppResult<Folder> {
+    let mut metadata = load_metadata(vault_dir)?;
+    if let Some(parent) = parent_id {
+        if !metadata.folders.iter().any(|f| f.id == parent) {
+            return Err(AppError::FileNotFound);
+        }
+    }
+    let folder = Folder {
+        id: Uuid::new_v4(),
+        name: name.to_string(),
+        parent_id,
+    };
+    metadata.folders.push(folder.clone());
+    save_metadata(vault_dir, &metadata)?;
+    Ok(folder)
+}
+
+pub fn rename_folder(vault_dir: &Path, folder_id: Uuid, new_name: &str) -> AppResult<()> {
+    let mut metadata = load_metadata(vault_dir)?;
+    let folder = metadata
+        .folders
+        .iter_mut()
+        .find(|f| f.id == folder_id)
+        .ok_or(AppError::FileNotFound)?;
+    folder.name = new_name.to_string();
+    save_metadata(vault_dir, &metadata)
+}
+
+/// Deletes a folder and everything inside it, recursively — nested
+/// folders and files alike. Mirrors `remove_file` in having no separate
+/// confirmation step of its own; the frontend is responsible for warning
+/// the user before calling this on a non-empty folder.
+pub fn delete_folder(vault_dir: &Path, folder_id: Uuid) -> AppResult<()> {
+    let mut metadata = load_metadata(vault_dir)?;
+    if !metadata.folders.iter().any(|f| f.id == folder_id) {
+        return Err(AppError::FileNotFound);
+    }
+
+    // Collect this folder and every descendant, so files/folders nested
+    // several levels deep are removed too, not just direct children.
+    let mut doomed_folders = vec![folder_id];
+    loop {
+        let before = doomed_folders.len();
+        for folder in &metadata.folders {
+            if let Some(parent) = folder.parent_id {
+                if doomed_folders.contains(&parent) && !doomed_folders.contains(&folder.id) {
+                    doomed_folders.push(folder.id);
+                }
+            }
+        }
+        if doomed_folders.len() == before {
+            break;
+        }
+    }
+
+    let doomed_files: Vec<Uuid> = metadata
+        .files
+        .iter()
+        .filter(|f| f.parent_id.is_some_and(|p| doomed_folders.contains(&p)))
+        .map(|f| f.id)
+        .collect();
+
+    for file_id in doomed_files {
+        let encrypted_path = vault_dir.join(FILES_DIR).join(file_id.to_string());
+        if encrypted_path.exists() {
+            // Same deny-delete override remove_file uses for a single file.
+            acl::allow_delete_once(&encrypted_path)?;
+            fs::remove_file(&encrypted_path)?;
+        }
+    }
+
+    metadata
+        .files
+        .retain(|f| !f.parent_id.is_some_and(|p| doomed_folders.contains(&p)));
+    metadata.folders.retain(|f| !doomed_folders.contains(&f.id));
     save_metadata(vault_dir, &metadata)
 }
 
@@ -819,7 +927,7 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"contenu secret").unwrap();
-        let entry = add_file(&vault_dir, &dek_before, source.path(), |_, _| {}).unwrap();
+        let entry = add_file(&vault_dir, &dek_before, source.path(), None, |_, _| {}).unwrap();
 
         change_master_password(&vault_dir, "old-password-123", "new-password-456").unwrap();
 
@@ -865,7 +973,7 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"hello vault").unwrap();
-        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), None, |_, _| {}).unwrap();
 
         let exported = export_file(&vault_dir, &dek, entry.id, |_, _| {}).unwrap();
         assert_eq!(fs::read(&exported).unwrap(), b"hello vault");
@@ -887,7 +995,7 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"hello vault").unwrap();
-        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), None, |_, _| {}).unwrap();
 
         rename_file(&vault_dir, entry.id, "nouveau-nom.txt").unwrap();
         let files = load_metadata(&vault_dir).unwrap().files;
@@ -913,7 +1021,7 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"hello export").unwrap();
-        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), None, |_, _| {}).unwrap();
 
         let destination = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
         export_file_to(&vault_dir, &dek, entry.id, &destination, |_, _| {}).unwrap();
@@ -934,7 +1042,7 @@ mod tests {
 
         let mut source = tempfile::NamedTempFile::new().unwrap();
         source.write_all(b"contenu sauvegarde").unwrap();
-        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), None, |_, _| {}).unwrap();
 
         let backup_dir = tempfile::tempdir().unwrap();
         let zip_path = backup_dir.path().join("backup.zip");
@@ -975,6 +1083,102 @@ mod tests {
         assert!(matches!(
             import_vault_backup(&app_data_dir, &zip_path, other_location.path()),
             Err(AppError::VaultAlreadyExists)
+        ));
+    }
+
+    #[test]
+    fn create_folder_rejects_a_parent_that_does_not_exist() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
+
+        let root_folder = create_folder(&vault_dir, None, "Documents").unwrap();
+        assert_eq!(root_folder.parent_id, None);
+
+        let nested = create_folder(&vault_dir, Some(root_folder.id), "Factures").unwrap();
+        assert_eq!(nested.parent_id, Some(root_folder.id));
+
+        assert!(matches!(
+            create_folder(&vault_dir, Some(Uuid::new_v4()), "Orphelin"),
+            Err(AppError::FileNotFound)
+        ));
+    }
+
+    #[test]
+    fn rename_folder_updates_the_name_only() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
+        let folder = create_folder(&vault_dir, None, "Ancien nom").unwrap();
+
+        rename_folder(&vault_dir, folder.id, "Nouveau nom").unwrap();
+        let folders = load_metadata(&vault_dir).unwrap().folders;
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].name, "Nouveau nom");
+        assert_eq!(folders[0].id, folder.id);
+
+        assert!(matches!(
+            rename_folder(&vault_dir, Uuid::new_v4(), "x"),
+            Err(AppError::FileNotFound)
+        ));
+    }
+
+    #[test]
+    fn deleting_a_folder_recursively_removes_nested_folders_and_files() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let parent = create_folder(&vault_dir, None, "Parent").unwrap();
+        let child = create_folder(&vault_dir, Some(parent.id), "Enfant").unwrap();
+        let unrelated = create_folder(&vault_dir, None, "Sans lien").unwrap();
+
+        let mut in_parent = tempfile::NamedTempFile::new().unwrap();
+        in_parent.write_all(b"dans le parent").unwrap();
+        let file_in_parent = add_file(&vault_dir, &dek, in_parent.path(), Some(parent.id), |_, _| {}).unwrap();
+
+        let mut in_child = tempfile::NamedTempFile::new().unwrap();
+        in_child.write_all(b"dans l'enfant").unwrap();
+        let file_in_child = add_file(&vault_dir, &dek, in_child.path(), Some(child.id), |_, _| {}).unwrap();
+
+        let mut in_unrelated = tempfile::NamedTempFile::new().unwrap();
+        in_unrelated.write_all(b"ailleurs").unwrap();
+        let file_in_unrelated =
+            add_file(&vault_dir, &dek, in_unrelated.path(), Some(unrelated.id), |_, _| {}).unwrap();
+
+        delete_folder(&vault_dir, parent.id).unwrap();
+
+        let metadata = load_metadata(&vault_dir).unwrap();
+        let folder_ids: Vec<Uuid> = metadata.folders.iter().map(|f| f.id).collect();
+        assert!(!folder_ids.contains(&parent.id));
+        assert!(!folder_ids.contains(&child.id));
+        assert!(folder_ids.contains(&unrelated.id));
+
+        let file_ids: Vec<Uuid> = metadata.files.iter().map(|f| f.id).collect();
+        assert!(!file_ids.contains(&file_in_parent.id));
+        assert!(!file_ids.contains(&file_in_child.id));
+        assert!(file_ids.contains(&file_in_unrelated.id));
+
+        // The encrypted blobs for the removed files must be gone from disk,
+        // not just the metadata entries.
+        assert!(!vault_dir.join(FILES_DIR).join(file_in_parent.id.to_string()).exists());
+        assert!(!vault_dir.join(FILES_DIR).join(file_in_child.id.to_string()).exists());
+        assert!(vault_dir.join(FILES_DIR).join(file_in_unrelated.id.to_string()).exists());
+    }
+
+    #[test]
+    fn add_file_rejects_a_parent_folder_that_does_not_exist() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Dossiers", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"contenu").unwrap();
+        assert!(matches!(
+            add_file(&vault_dir, &dek, source.path(), Some(Uuid::new_v4()), |_, _| {}),
+            Err(AppError::FileNotFound)
         ));
     }
 }

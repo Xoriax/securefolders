@@ -3,6 +3,13 @@ export interface FileEntry {
   name: string;
   size: number;
   addedAt: string;
+  parentId: string | null;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  parentId: string | null;
 }
 
 export interface VaultSummary {
