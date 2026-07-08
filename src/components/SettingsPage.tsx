@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { api, errorMessage } from "../api";
 
 const AUTO_LOCK_OPTIONS = [
@@ -15,6 +17,9 @@ export function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoLockSeconds, setAutoLockSeconds] = useState<number | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
 
   useEffect(() => {
     api.getAutoLockSeconds().then(setAutoLockSeconds).catch(() => {});
@@ -28,6 +33,38 @@ export function SettingsPage() {
       setMessage("Tous les coffres ont ete verrouilles.");
     } catch (err) {
       setError(errorMessage(err));
+    }
+  }
+
+  async function handleCheckForUpdates() {
+    setError(null);
+    setMessage(null);
+    setAvailableUpdate(null);
+    setCheckingUpdate(true);
+    try {
+      const update = await check();
+      if (update) {
+        setAvailableUpdate(update);
+      } else {
+        setMessage("Vous utilisez deja la derniere version.");
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!availableUpdate) return;
+    setError(null);
+    setInstallingUpdate(true);
+    try {
+      await availableUpdate.downloadAndInstall();
+      await relaunch();
+    } catch (err) {
+      setError(errorMessage(err));
+      setInstallingUpdate(false);
     }
   }
 
@@ -56,8 +93,9 @@ export function SettingsPage() {
       <div className="warning-banner">
         Si vous perdez votre mot de passe maitre, les fichiers d'un coffre ne
         pourront jamais etre recuperes. Aucune cle n'est stockee sur le disque
-        ni envoyee sur Internet — l'application fonctionne entierement hors
-        ligne.
+        ni envoyee sur Internet. L'application ne se connecte a Internet que
+        si vous cliquez vous-meme sur "Verifier les mises a jour" ci-dessous —
+        jamais automatiquement, et jamais pour vos coffres ou leur contenu.
       </div>
 
       <div className="field">
@@ -81,6 +119,29 @@ export function SettingsPage() {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="field">
+        <label>Mises a jour</label>
+        <p style={{ fontSize: 13, color: "var(--text-dim)", margin: "0 0 8px" }}>
+          Verifie manuellement s'il existe une nouvelle version. Aucune
+          verification automatique n'a lieu en arriere-plan.
+        </p>
+        {availableUpdate ? (
+          <>
+            <p style={{ fontSize: 13, margin: "0 0 8px" }}>
+              Version {availableUpdate.version} disponible (actuelle :{" "}
+              {availableUpdate.currentVersion}).
+            </p>
+            <button className="btn btn-primary" onClick={handleInstallUpdate} disabled={installingUpdate}>
+              {installingUpdate ? "Installation..." : "Telecharger et installer"}
+            </button>
+          </>
+        ) : (
+          <button className="btn" onClick={handleCheckForUpdates} disabled={checkingUpdate}>
+            {checkingUpdate ? "Verification..." : "Verifier les mises a jour"}
+          </button>
+        )}
       </div>
 
       <div className="field">
