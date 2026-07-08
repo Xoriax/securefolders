@@ -78,6 +78,7 @@ src-tauri/src/
 12. Le dossier d'un coffre nouvellement créé refuse la suppression (permission NTFS explicite) depuis l'Explorateur ou tout autre processus externe ; seule l'application peut supprimer un fichier ou le coffre entier, en levant cette permission juste avant sa propre opération de suppression.
 13. Chaque coffre reçoit un raccourci Windows (`Ouvrir avec SecureFolders.lnk`) déposé dans son dossier, qui relance l'application directement dessus — Windows n'offrant aucun moyen natif de faire réagir un double-clic sur le dossier lui-même.
 14. La sauvegarde d'un coffre regroupe `vault.json` et les fichiers déjà chiffrés dans une seule archive .zip, sans déchiffrement ni chiffrement supplémentaire — l'archive n'a pas besoin de son propre mot de passe puisque son contenu l'est déjà. Le raccourci de lancement et la protection anti-suppression, spécifiques à la machine, ne sont pas inclus ; ils sont recréés à l'import.
+15. Tous les coffres se verrouillent automatiquement au réveil d'une mise en veille ou d'une hibernation, en plus du délai d'inactivité habituel. Détecté côté interface via un écart anormalement grand entre deux sondages réguliers — un minuteur JavaScript ne peut pas être mis en pause de cette façon autrement que si le système d'exploitation a réellement suspendu le processus. Cela ne détecte pas un verrouillage manuel de session Windows (Win+L) qui n'endort pas la machine ; ce cas reste couvert par le délai d'inactivité normal.
 
 ## Limites de sécurité connues
 

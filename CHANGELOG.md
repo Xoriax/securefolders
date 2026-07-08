@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.13.0] - 2026-07-08
+
+### Ajoute
+- Verrouillage automatique de tous les coffres au reveil d'une mise en veille/hibernation. Le minuteur d'inactivite existant ne couvrait pas ce cas : un ordinateur portable ferme en pleine session restait deverrouille au reveil tant que le delai configure n'etait pas ecoule, meme si le temps reel ecoule depassait largement ce delai. Detecte via un ecart anormalement grand entre deux sondages reguliers (le systeme d'exploitation ne peut pas suspendre un minuteur JS de cette maniere autrement) plutot que par un evenement Windows natif, que Tauri n'expose pas.
+
 ## [0.12.0] - 2026-07-08
 
 ### Ajoute
