@@ -54,6 +54,7 @@ pub fn run() {
             commands::confirm_totp,
             commands::list_files,
             commands::add_file,
+            commands::rename_file,
             commands::remove_file,
             commands::export_file,
             commands::export_file_to,

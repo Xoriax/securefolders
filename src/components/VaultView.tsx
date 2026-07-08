@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -21,6 +21,22 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
+type SortKey = "name-asc" | "name-desc" | "date-desc" | "size-desc";
+
+function sortFiles(files: FileEntry[], sortKey: SortKey): FileEntry[] {
+  const sorted = [...files];
+  switch (sortKey) {
+    case "name-asc":
+      return sorted.sort((a, b) => a.name.localeCompare(b.name));
+    case "name-desc":
+      return sorted.sort((a, b) => b.name.localeCompare(a.name));
+    case "date-desc":
+      return sorted.sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+    case "size-desc":
+      return sorted.sort((a, b) => b.size - a.size);
+  }
+}
+
 export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -30,6 +46,18 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
   const [previewingFile, setPreviewingFile] = useState<FileEntry | null>(null);
   const [progress, setProgress] = useState<TransferProgress | null>(null);
   const progressClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name-asc");
+  const [renamingFileId, setRenamingFileId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const visibleFiles = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const filtered = query
+      ? files.filter((f) => f.name.toLowerCase().includes(query))
+      : files;
+    return sortFiles(filtered, sortKey);
+  }, [files, searchQuery, sortKey]);
 
   const refresh = useCallback(() => {
     api
@@ -107,6 +135,23 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
     }
   }
 
+  function startRename(file: FileEntry) {
+    setRenamingFileId(file.id);
+    setRenameValue(file.name);
+  }
+
+  async function commitRename(fileId: string) {
+    const newName = renameValue.trim();
+    setRenamingFileId(null);
+    if (!newName) return;
+    try {
+      await api.renameFile(vault.id, fileId, newName);
+      refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function handleExport(file: FileEntry) {
     setError(null);
     try {
@@ -171,22 +216,59 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
       {files.length === 0 ? (
         <div className="empty-state">Ce coffre ne contient encore aucun fichier.</div>
       ) : (
-        <div className="file-list">
-          {files.map((file) => (
-            <div className="file-row" key={file.id}>
-              <div className="file-name">
-                <span>📄</span>
-                <span>{file.name}</span>
-                <span className="file-size">{formatSize(file.size)}</span>
-              </div>
-              <div className="row-actions">
-                <button onClick={() => setPreviewingFile(file)}>Apercu</button>
-                <button onClick={() => handleExport(file)}>Exporter</button>
-                <button onClick={() => handleRemove(file.id)}>Supprimer</button>
-              </div>
+        <>
+          <div className="file-list-toolbar">
+            <input
+              type="text"
+              placeholder="Rechercher un fichier..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+              <option value="name-asc">Nom (A-Z)</option>
+              <option value="name-desc">Nom (Z-A)</option>
+              <option value="date-desc">Plus recent</option>
+              <option value="size-desc">Plus volumineux</option>
+            </select>
+          </div>
+
+          {visibleFiles.length === 0 ? (
+            <div className="empty-state">Aucun fichier ne correspond a la recherche.</div>
+          ) : (
+            <div className="file-list">
+              {visibleFiles.map((file) => (
+                <div className="file-row" key={file.id}>
+                  <div className="file-name">
+                    <span>📄</span>
+                    {renamingFileId === file.id ? (
+                      <input
+                        type="text"
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => commitRename(file.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitRename(file.id);
+                          if (e.key === "Escape") setRenamingFileId(null);
+                        }}
+                      />
+                    ) : (
+                      <span>{file.name}</span>
+                    )}
+                    <span className="file-size">{formatSize(file.size)}</span>
+                  </div>
+                  <div className="row-actions">
+                    <button onClick={() => setPreviewingFile(file)}>Apercu</button>
+                    <button onClick={() => startRename(file)}>Renommer</button>
+                    <button onClick={() => handleExport(file)}>Exporter</button>
+                    <button onClick={() => handleRemove(file.id)}>Supprimer</button>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {showTotpSetup && (

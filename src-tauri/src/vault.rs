@@ -441,6 +441,19 @@ pub fn add_file(
     Ok(entry)
 }
 
+/// Renames a file's display name. The on-disk encrypted blob is named by
+/// its UUID, never the file's own name, so this only touches metadata.
+pub fn rename_file(vault_dir: &Path, file_id: Uuid, new_name: &str) -> AppResult<()> {
+    let mut metadata = load_metadata(vault_dir)?;
+    let entry = metadata
+        .files
+        .iter_mut()
+        .find(|f| f.id == file_id)
+        .ok_or(AppError::FileNotFound)?;
+    entry.name = new_name.to_string();
+    save_metadata(vault_dir, &metadata)
+}
+
 pub fn remove_file(vault_dir: &Path, file_id: Uuid) -> AppResult<()> {
     let mut metadata = load_metadata(vault_dir)?;
     let before = metadata.files.len();
@@ -759,6 +772,32 @@ mod tests {
         remove_file(&vault_dir, entry.id).unwrap();
         assert!(matches!(
             export_file(&vault_dir, &dek, entry.id, |_, _| {}),
+            Err(AppError::FileNotFound)
+        ));
+    }
+
+    #[test]
+    fn rename_file_updates_the_display_name_only() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Fichiers", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"hello vault").unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+
+        rename_file(&vault_dir, entry.id, "nouveau-nom.txt").unwrap();
+        let files = load_metadata(&vault_dir).unwrap().files;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "nouveau-nom.txt");
+        assert_eq!(files[0].id, entry.id);
+
+        let exported = export_file(&vault_dir, &dek, entry.id, |_, _| {}).unwrap();
+        assert_eq!(fs::read(&exported).unwrap(), b"hello vault");
+
+        assert!(matches!(
+            rename_file(&vault_dir, Uuid::new_v4(), "x"),
             Err(AppError::FileNotFound)
         ));
     }

@@ -22,6 +22,17 @@ fn app_data_dir(app: &AppHandle) -> AppResult<PathBuf> {
         .map_err(|e| AppError::Crypto(format!("repertoire de donnees introuvable: {e}")))
 }
 
+/// Passwords cross the IPC boundary as raw bytes (a plain JS array, not a
+/// string) so the frontend can wipe its own copy of them right after this
+/// call — see `secureBytes.ts`. This decodes them back to a `String` for the
+/// existing `&str`-based vault/crypto APIs, wrapped so it's zeroed on drop
+/// instead of lingering in freed memory like an ordinary `String` would.
+fn password_from_bytes(bytes: Vec<u8>) -> AppResult<zeroize::Zeroizing<String>> {
+    String::from_utf8(bytes)
+        .map(zeroize::Zeroizing::new)
+        .map_err(|_| AppError::Crypto("mot de passe invalide (encodage)".into()))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnlockResult {
@@ -138,8 +149,9 @@ pub fn create_vault(
     app: AppHandle,
     name: String,
     location: String,
-    password: String,
+    password: Vec<u8>,
 ) -> AppResult<vault::VaultSummary> {
+    let password = password_from_bytes(password)?;
     if password.len() < 8 {
         return Err(AppError::Crypto(
             "le mot de passe maitre doit contenir au moins 8 caracteres".into(),
@@ -167,9 +179,10 @@ pub fn unlock_vault(
     app: AppHandle,
     state: State<AppState>,
     vault_id: Uuid,
-    password: String,
+    password: Vec<u8>,
 ) -> AppResult<UnlockResult> {
     state.check_rate_limit(vault_id)?;
+    let password = password_from_bytes(password)?;
     let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
     let (metadata, dek) = match vault::unlock(&vault_dir, &password) {
         Ok(v) => v,
@@ -336,6 +349,22 @@ pub fn add_file(
 }
 
 #[tauri::command]
+pub fn rename_file(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    file_id: Uuid,
+    new_name: String,
+) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    if new_name.trim().is_empty() {
+        return Err(AppError::Crypto("le nom du fichier ne peut pas etre vide".into()));
+    }
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::rename_file(&vault_dir, file_id, new_name.trim())
+}
+
+#[tauri::command]
 pub fn remove_file(
     app: AppHandle,
     state: State<AppState>,
@@ -482,10 +511,12 @@ pub fn change_master_password(
     app: AppHandle,
     state: State<AppState>,
     vault_id: Uuid,
-    old_password: String,
-    new_password: String,
+    old_password: Vec<u8>,
+    new_password: Vec<u8>,
 ) -> AppResult<()> {
     state.get_active_dek(vault_id)?;
+    let old_password = password_from_bytes(old_password)?;
+    let new_password = password_from_bytes(new_password)?;
     if new_password.len() < 8 {
         return Err(AppError::Crypto(
             "le nouveau mot de passe doit contenir au moins 8 caracteres".into(),

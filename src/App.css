@@ -350,6 +350,22 @@
   margin: 0;
 }
 
+.file-list-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.file-list-toolbar input,
+.file-list-toolbar select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: var(--text);
+  font-size: 13px;
+}
+
 .file-list {
   border: 1px solid var(--border);
   border-radius: var(--radius);

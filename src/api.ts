@@ -13,10 +13,11 @@ import type {
 export const api = {
   listVaults: () => invoke<VaultSummary[]>("list_vaults"),
 
-  createVault: (name: string, location: string, password: string) =>
+  // Passwords travel as raw bytes (see secureBytes.ts), not JS strings.
+  createVault: (name: string, location: string, password: number[]) =>
     invoke<VaultSummary>("create_vault", { name, location, password }),
 
-  unlockVault: (vaultId: string, password: string) =>
+  unlockVault: (vaultId: string, password: number[]) =>
     invoke<UnlockResult>("unlock_vault", { vaultId, password }),
 
   verifyTotp: (vaultId: string, code: string) =>
@@ -42,6 +43,9 @@ export const api = {
   addFile: (vaultId: string, sourcePath: string) =>
     invoke<FileEntry>("add_file", { vaultId, sourcePath }),
 
+  renameFile: (vaultId: string, fileId: string, newName: string) =>
+    invoke<void>("rename_file", { vaultId, fileId, newName }),
+
   removeFile: (vaultId: string, fileId: string) =>
     invoke<void>("remove_file", { vaultId, fileId }),
 
@@ -62,7 +66,7 @@ export const api = {
   renameVault: (vaultId: string, newName: string) =>
     invoke<void>("rename_vault", { vaultId, newName }),
 
-  changeMasterPassword: (vaultId: string, oldPassword: string, newPassword: string) =>
+  changeMasterPassword: (vaultId: string, oldPassword: number[], newPassword: number[]) =>
     invoke<void>("change_master_password", { vaultId, oldPassword, newPassword }),
 
   disableTotp: (vaultId: string) => invoke<void>("disable_totp", { vaultId }),
