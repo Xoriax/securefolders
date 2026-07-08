@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import { api, errorMessage } from "./api";
 import type { VaultSummary } from "./types";
@@ -50,6 +51,25 @@ function App() {
 
   function openVault(vault: VaultSummary) {
     setView({ kind: "unlock", vault });
+  }
+
+  async function handleImportBackup() {
+    setError(null);
+    const backupZip = await open({
+      filters: [{ name: "Sauvegarde SecureFolders", extensions: ["zip"] }],
+      multiple: false,
+    });
+    if (typeof backupZip !== "string") return;
+
+    const destinationParent = await open({ directory: true, multiple: false });
+    if (typeof destinationParent !== "string") return;
+
+    try {
+      await api.importVaultBackup(backupZip, destinationParent);
+      refreshVaults();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }
 
   function backToList() {
@@ -108,9 +128,14 @@ function App() {
                 <h1>Mes coffres</h1>
                 <p>Vos dossiers chiffres, stockes uniquement en local</p>
               </div>
-              <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
-                + Creer un coffre
-              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn" onClick={handleImportBackup}>
+                  Importer une sauvegarde
+                </button>
+                <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+                  + Creer un coffre
+                </button>
+              </div>
             </div>
 
             {error && <div className="error-text">{error}</div>}

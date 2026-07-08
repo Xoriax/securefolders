@@ -61,6 +61,8 @@ pub fn run() {
             commands::preview_file,
             commands::is_vault_unlocked,
             commands::delete_vault,
+            commands::export_vault_backup,
+            commands::import_vault_backup,
             commands::rename_vault,
             commands::change_master_password,
             commands::disable_totp,

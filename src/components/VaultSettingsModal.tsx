@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../api";
 import { encodePassword, wipe } from "../secureBytes";
 import type { VaultSummary } from "../types";
@@ -114,6 +115,25 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
     }
   }
 
+  async function handleBackup() {
+    setError(null);
+    setMessage(null);
+    try {
+      const destination = await save({
+        defaultPath: `${vault.name}.zip`,
+        filters: [{ name: "Sauvegarde SecureFolders", extensions: ["zip"] }],
+      });
+      if (!destination) return;
+      setBusy(true);
+      await api.exportVaultBackup(vault.id, destination);
+      setMessage("Sauvegarde du coffre creee.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     setError(null);
     setBusy(true);
@@ -216,6 +236,18 @@ export function VaultSettingsModal({ vault, onClose, onRenamed, onTotpDisabled, 
           </p>
           <button type="button" className="btn" onClick={handleCreateLauncher} disabled={busy}>
             Creer le raccourci
+          </button>
+        </div>
+
+        <div className="field" style={{ marginTop: 18 }}>
+          <label>Sauvegarde</label>
+          <p style={{ fontSize: 12, color: "var(--text-dim)", margin: "0 0 8px" }}>
+            Exporte le coffre entier (deja chiffre) dans une seule archive
+            .zip, pour le sauvegarder ou le transferer vers une autre
+            machine.
+          </p>
+          <button type="button" className="btn" onClick={handleBackup} disabled={busy}>
+            Sauvegarder le coffre
           </button>
         </div>
 

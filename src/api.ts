@@ -63,6 +63,12 @@ export const api = {
 
   deleteVault: (vaultId: string) => invoke<void>("delete_vault", { vaultId }),
 
+  exportVaultBackup: (vaultId: string, destination: string) =>
+    invoke<void>("export_vault_backup", { vaultId, destination }),
+
+  importVaultBackup: (backupZip: string, destinationParent: string) =>
+    invoke<VaultSummary>("import_vault_backup", { backupZip, destinationParent }),
+
   renameVault: (vaultId: string, newName: string) =>
     invoke<void>("rename_vault", { vaultId, newName }),
 

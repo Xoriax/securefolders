@@ -1,9 +1,12 @@
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::crypto::{self, Argon2Params, VaultKey};
 use crate::error::{AppError, AppResult};
@@ -554,6 +557,105 @@ pub fn wipe_all_temp_exports() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Bundles a vault's metadata and encrypted files into a single .zip for
+/// backup or migration to another machine. Nothing is decrypted or
+/// re-encrypted here — every file inside is already AES-256-GCM ciphertext,
+/// so the archive itself doesn't need (or get) a separate password.
+/// The launcher shortcut is deliberately left out: it points at this
+/// machine's install path, so restoring it verbatim elsewhere would be
+/// wrong. `import_vault_backup` creates a fresh one instead.
+pub fn export_vault_backup(vault_dir: &Path, destination: &Path) -> AppResult<()> {
+    let file = fs::File::create(destination)?;
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    zip.start_file(METADATA_FILE, options)?;
+    zip.write_all(&fs::read(metadata_path(vault_dir))?)?;
+
+    let files_dir = vault_dir.join(FILES_DIR);
+    if files_dir.exists() {
+        for entry in fs::read_dir(&files_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            zip.start_file(format!("{FILES_DIR}/{}", entry.file_name().to_string_lossy()), options)?;
+            zip.write_all(&fs::read(entry.path())?)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
+}
+
+/// Restores a vault from a backup created by `export_vault_backup` into a
+/// new folder under `destination_parent`. Refuses to import a vault whose
+/// id is already known to this machine, to avoid ending up with two index
+/// entries for what the app would otherwise treat as the same vault (the
+/// exact bug that made `create_vault`'s directory creation atomic).
+/// Re-applies the deletion protection and launcher shortcut that were left
+/// out of the backup, since both are specific to this machine/install.
+pub fn import_vault_backup(
+    app_data_dir: &Path,
+    backup_zip: &Path,
+    destination_parent: &Path,
+) -> AppResult<(VaultMetadata, PathBuf)> {
+    let file = fs::File::open(backup_zip)?;
+    let mut zip = ZipArchive::new(file)?;
+
+    let metadata: VaultMetadata = {
+        let mut entry = zip
+            .by_name(METADATA_FILE)
+            .map_err(|_| AppError::Crypto("archive de sauvegarde invalide (vault.json manquant)".into()))?;
+        let mut raw = String::new();
+        entry.read_to_string(&mut raw)?;
+        serde_json::from_str(&raw)?
+    };
+
+    if find_vault_path(app_data_dir, metadata.id).is_ok() {
+        return Err(AppError::VaultAlreadyExists);
+    }
+
+    let vault_dir = destination_parent.join(sanitize_folder_name(&metadata.name));
+    fs::create_dir(&vault_dir).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::VaultAlreadyExists
+        } else {
+            AppError::Io(e)
+        }
+    })?;
+    acl::protect_from_deletion(&vault_dir)?;
+    fs::create_dir_all(vault_dir.join(FILES_DIR))?;
+
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i)?;
+        let Some(file_name) = entry.name().strip_prefix(&format!("{FILES_DIR}/")) else {
+            continue;
+        };
+        if file_name.is_empty() {
+            continue;
+        }
+        let file_name = file_name.to_string();
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)?;
+        fs::write(vault_dir.join(FILES_DIR).join(file_name), buf)?;
+    }
+    save_metadata(&vault_dir, &metadata)?;
+
+    if let Err(e) = launcher::create_launcher(&vault_dir) {
+        log::warn!("impossible de creer le raccourci de lancement pour {}: {e}", vault_dir.display());
+    }
+
+    let mut index = load_index(app_data_dir)?;
+    index.push(VaultIndexEntry {
+        id: metadata.id,
+        name: metadata.name.clone(),
+        path: vault_dir.clone(),
+    });
+    save_index(app_data_dir, &index)?;
+
+    Ok((metadata, vault_dir))
+}
+
 fn sanitize_folder_name(name: &str) -> String {
     name.chars()
         .map(|c| match c {
@@ -820,6 +922,59 @@ mod tests {
         assert!(matches!(
             export_file_to(&vault_dir, &dek, Uuid::new_v4(), &destination, |_, _| {}),
             Err(AppError::FileNotFound)
+        ));
+    }
+
+    #[test]
+    fn backup_export_and_import_round_trip_preserves_files_and_unlock() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (metadata, vault_dir) =
+            create_vault(&app_data_dir, "Sauvegarde", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"contenu sauvegarde").unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+
+        let backup_dir = tempfile::tempdir().unwrap();
+        let zip_path = backup_dir.path().join("backup.zip");
+        export_vault_backup(&vault_dir, &zip_path).unwrap();
+        assert!(zip_path.exists());
+
+        // Import into a second, independent app_data_dir/location pair, as
+        // if this were a different machine.
+        let (_other_root, other_app_data_dir, other_location) = fresh_dirs();
+        let (restored_metadata, restored_dir) =
+            import_vault_backup(&other_app_data_dir, &zip_path, &other_location).unwrap();
+        assert_eq!(restored_metadata.id, metadata.id);
+        assert_eq!(restored_metadata.name, "Sauvegarde");
+
+        let (_unlocked, restored_dek) = unlock(&restored_dir, "password123").unwrap();
+        let restored_export = export_file(&restored_dir, &restored_dek, entry.id, |_, _| {}).unwrap();
+        assert_eq!(fs::read(&restored_export).unwrap(), b"contenu sauvegarde");
+
+        let summaries = list_vaults(&other_app_data_dir).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, metadata.id);
+    }
+
+    #[test]
+    fn importing_a_backup_of_an_already_known_vault_is_refused() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Doublon", &location, "password123").unwrap();
+
+        let backup_dir = tempfile::tempdir().unwrap();
+        let zip_path = backup_dir.path().join("backup.zip");
+        export_vault_backup(&vault_dir, &zip_path).unwrap();
+
+        // Importing into the SAME app_data_dir the vault is already
+        // registered in must be refused, not silently create a duplicate
+        // index entry for the same id.
+        let other_location = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            import_vault_backup(&app_data_dir, &zip_path, other_location.path()),
+            Err(AppError::VaultAlreadyExists)
         ));
     }
 }

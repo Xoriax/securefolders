@@ -26,6 +26,8 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error("Erreur de (de)serialisation: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("Erreur d'archive de sauvegarde: {0}")]
+    Zip(#[from] zip::result::ZipError),
     #[error("Erreur cryptographique: {0}")]
     Crypto(String),
 }

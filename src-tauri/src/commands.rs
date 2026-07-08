@@ -488,6 +488,46 @@ pub fn delete_vault(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> A
     Ok(())
 }
 
+/// Bundles the vault's metadata and encrypted files into a single .zip the
+/// user picked via a save dialog, for backup or migration to another
+/// machine. Requires an active session, like the vault's other settings
+/// actions.
+#[tauri::command]
+pub fn export_vault_backup(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    destination: String,
+) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    vault::export_vault_backup(&vault_dir, &PathBuf::from(destination))
+}
+
+/// Restores a vault from a .zip created by `export_vault_backup` into a new
+/// folder under `destination_parent`. No active session is required —
+/// there is nothing to unlock yet.
+#[tauri::command]
+pub fn import_vault_backup(
+    app: AppHandle,
+    backup_zip: String,
+    destination_parent: String,
+) -> AppResult<vault::VaultSummary> {
+    let (metadata, path) = vault::import_vault_backup(
+        &app_data_dir(&app)?,
+        &PathBuf::from(backup_zip),
+        &PathBuf::from(destination_parent),
+    )?;
+    Ok(vault::VaultSummary {
+        id: metadata.id,
+        name: metadata.name,
+        path,
+        totp_enabled: metadata.totp_enabled,
+        file_count: metadata.files.len(),
+        created_at: metadata.created_at,
+    })
+}
+
 #[tauri::command]
 pub fn rename_vault(
     app: AppHandle,
