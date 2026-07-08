@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SecureFolders",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "identifier": "com.securefolders.app",
   "build": {
     "frontendDist": "../dist",
@@ -46,7 +46,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBODY1RERGOUUxOTlFRDYKUldUV25obWUzMTJHeXZnOHFOVlhnenh1SS92SlNnd25OY1BQSlFqQUpvWW9HTkVncUVqaHozcnAK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGRTdGMzYwRDY1MkVFMTgKUldRWTdsTFdZUFBucnoyQXdSZ1JQS1RBZXBmcXY1a3ZzMG8xUkRKekUyTXdUUXZIK01oUFEySFkK",
       "endpoints": [
         "https://github.com/Xoriax/securefolders/releases/latest/download/latest.json"
       ]

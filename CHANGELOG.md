@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.17.1] - 2026-07-08
+
+### Corrige
+- Nouvelle cle de signature pour les mises a jour automatiques (le depot a ete recree ; l'ancienne cle privee, jamais stockee ailleurs que comme secret GitHub Actions, n'etait plus recuperable). Consequence : les installations issues des versions precedentes ne pourront plus verifier la signature des futures mises a jour et devront reinstaller manuellement une fois cette version disponible.
+
 ## [0.17.0] - 2026-07-08
 
 ### Securite
