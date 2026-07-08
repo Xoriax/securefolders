@@ -267,7 +267,7 @@ pub fn create_vault(
     let master_key = crypto::derive_key(password, &salt, &params)?;
 
     let dek = crypto::random_dek();
-    let dek_encrypted = crypto::encrypt(&master_key, &dek.0)?;
+    let dek_encrypted = crypto::encrypt(&master_key, dek.as_bytes())?;
 
     let mut metadata = VaultMetadata {
         id: Uuid::new_v4(),
@@ -378,7 +378,7 @@ pub fn change_master_password(
     let new_salt = crypto::random_salt();
     let new_master_key = crypto::derive_key(new_password, &new_salt, &metadata.argon2_params)?;
     metadata.salt = new_salt.to_vec();
-    metadata.dek_encrypted = crypto::encrypt(&new_master_key, &dek.0)?;
+    metadata.dek_encrypted = crypto::encrypt(&new_master_key, dek.as_bytes())?;
     save_metadata(vault_dir, &metadata)
 }
 
@@ -392,7 +392,7 @@ pub fn unlock(vault_dir: &Path, password: &str) -> AppResult<(VaultMetadata, Vau
     let dek: [u8; crypto::KEY_LEN] = dek_bytes
         .try_into()
         .map_err(|_| AppError::Crypto("taille de cle invalide".into()))?;
-    let dek = VaultKey(dek);
+    let dek = VaultKey::new(dek);
 
     // Must run after the password is known to be correct (constant-time
     // AEAD failure vs. tamper failure would otherwise leak which case

@@ -4,6 +4,11 @@ Toutes les modifications notables de ce projet sont documentées dans ce fichier
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
+## [0.17.0] - 2026-07-08
+
+### Securite
+- La DEK (et la cle derivee du mot de passe maitre) est desormais verrouillee en memoire (`VirtualLock` Windows) des sa creation, y compris pour chacune de ses copies : elle ne peut plus etre ecrite dans le fichier d'echange ni dans un instantane d'hibernation pendant qu'elle est utilisee, ce qui aurait pu laisser la cle en clair sur le disque bien apres la fermeture de l'application. Best-effort par nature (comme le reste des mitigations memoire deja en place) : `VirtualLock` peut echouer dans de rares cas (quota de working-set epuise), auquel cas l'application continue de fonctionner normalement sans bloquer le deverrouillage.
+
 ## [0.16.0] - 2026-07-08
 
 ### Securite

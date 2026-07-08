@@ -10,7 +10,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
 
 use crate::error::{AppError, AppResult};
 
@@ -55,8 +55,68 @@ impl Default for Argon2Params {
 
 /// A raw encryption key held only in memory. Never serialized, never written
 /// to disk, wiped as soon as it is dropped.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
-pub struct VaultKey(pub [u8; KEY_LEN]);
+///
+/// Boxed (rather than an inline `[u8; KEY_LEN]`) so the key bytes live at a
+/// single, stable heap address for the lifetime of this allocation: moving a
+/// `VaultKey` by value (returning it, storing it in a `HashMap`, etc.) only
+/// moves the pointer, never the locked memory itself — which is what makes
+/// `VirtualLock` below still mean something after the key has been passed
+/// around. Every independent copy (see `Clone`) gets its own fresh
+/// allocation and its own lock, since a bitwise copy would otherwise leave
+/// the copy unlocked.
+pub struct VaultKey(Box<[u8; KEY_LEN]>);
+
+/// Best-effort: asks Windows to keep these pages resident in RAM so the key
+/// never gets written out to the page file or a hibernation snapshot, where
+/// it would outlive the process and sit on disk in the clear. Not a hard
+/// guarantee — `VirtualLock` can still fail (e.g. an exotic low-memory
+/// working-set limit), in which case this silently does nothing rather than
+/// blocking the unlock the key belongs to.
+fn lock_memory(bytes: &mut [u8; KEY_LEN]) {
+    let ok = unsafe {
+        windows_sys::Win32::System::Memory::VirtualLock(
+            bytes.as_mut_ptr().cast(),
+            KEY_LEN,
+        )
+    };
+    if ok == 0 {
+        log::warn!("VirtualLock a echoue: la cle peut finir dans le fichier d'echange");
+    }
+}
+
+/// Releases the lock taken by `lock_memory`, called right before the bytes
+/// are zeroized on drop. Ignored on failure for the same reason as above —
+/// there is nothing meaningful to do about it, and it must never stop the
+/// zeroization that follows.
+fn unlock_memory(bytes: &mut [u8; KEY_LEN]) {
+    unsafe {
+        windows_sys::Win32::System::Memory::VirtualUnlock(bytes.as_mut_ptr().cast(), KEY_LEN);
+    }
+}
+
+impl VaultKey {
+    pub fn new(mut bytes: [u8; KEY_LEN]) -> Self {
+        lock_memory(&mut bytes);
+        Self(Box::new(bytes))
+    }
+
+    pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
+        &self.0
+    }
+}
+
+impl Clone for VaultKey {
+    fn clone(&self) -> Self {
+        Self::new(*self.0)
+    }
+}
+
+impl Drop for VaultKey {
+    fn drop(&mut self) {
+        unlock_memory(&mut self.0);
+        self.0.zeroize();
+    }
+}
 
 pub fn random_salt() -> [u8; SALT_LEN] {
     let mut salt = [0u8; SALT_LEN];
@@ -92,14 +152,14 @@ pub fn derive_key(password: &str, salt: &[u8], params: &Argon2Params) -> AppResu
         .hash_password_into(password.as_bytes(), salt, &mut key)
         .map_err(|e| AppError::Crypto(e.to_string()))?;
 
-    Ok(VaultKey(key))
+    Ok(VaultKey::new(key))
 }
 
 /// Encrypts `plaintext` with AES-256-GCM under `key`, using a fresh random
 /// nonce. Returns `nonce || ciphertext_with_tag`, self-contained so it can be
 /// stored and decrypted without extra bookkeeping.
 pub fn encrypt(key: &VaultKey, plaintext: &[u8]) -> AppResult<Vec<u8>> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key.0));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_bytes()));
     let nonce_bytes = random_nonce();
     let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -120,7 +180,7 @@ pub fn decrypt(key: &VaultKey, data: &[u8]) -> AppResult<Vec<u8>> {
         return Err(AppError::Crypto("donnees chiffrees invalides".into()));
     }
     let (nonce_bytes, ciphertext) = data.split_at(NONCE_LEN);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key.0));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_bytes()));
     let nonce = Nonce::from_slice(nonce_bytes);
 
     cipher
@@ -167,7 +227,7 @@ pub fn encrypt_file(
 ) -> AppResult<()> {
     let total_len = std::fs::metadata(source)?.len();
     let nonce_bytes = random_stream_nonce();
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key.0));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_bytes()));
     let mut encryptor = EncryptorBE32::from_aead(cipher, GenericArray::from_slice(&nonce_bytes));
 
     let mut input = BufReader::new(File::open(source)?);
@@ -226,7 +286,7 @@ pub fn decrypt_file(
     let mut done: u64 = STREAM_NONCE_LEN as u64;
     on_progress(done, total_len);
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key.0));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_bytes()));
     let mut decryptor = DecryptorBE32::from_aead(cipher, GenericArray::from_slice(&nonce_bytes));
 
     let mut output = BufWriter::new(File::create(dest)?);
@@ -264,7 +324,7 @@ pub fn decrypt_file(
 /// instead of silently changing the app's behaviour.
 pub fn compute_mac(key: &VaultKey, message: &[u8]) -> Vec<u8> {
     let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(&key.0).expect("HMAC accepts a key of any size");
+        <HmacSha256 as Mac>::new_from_slice(key.as_bytes()).expect("HMAC accepts a key of any size");
     mac.update(message);
     mac.finalize().into_bytes().to_vec()
 }
@@ -272,7 +332,7 @@ pub fn compute_mac(key: &VaultKey, message: &[u8]) -> Vec<u8> {
 /// Verifies a tag produced by [`compute_mac`] in constant time.
 pub fn verify_mac(key: &VaultKey, message: &[u8], tag: &[u8]) -> bool {
     let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(&key.0).expect("HMAC accepts a key of any size");
+        <HmacSha256 as Mac>::new_from_slice(key.as_bytes()).expect("HMAC accepts a key of any size");
     mac.update(message);
     mac.verify_slice(tag).is_ok()
 }
@@ -320,7 +380,7 @@ pub fn hash_recovery_code(code: &str) -> Vec<u8> {
 pub fn random_dek() -> VaultKey {
     let mut key = [0u8; KEY_LEN];
     rand::rngs::OsRng.fill_bytes(&mut key);
-    VaultKey(key)
+    VaultKey::new(key)
 }
 
 #[cfg(test)]

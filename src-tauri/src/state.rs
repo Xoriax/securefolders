@@ -318,7 +318,7 @@ mod tests {
         let state = AppState::default();
         let vault_id = Uuid::new_v4();
         state.set_auto_lock_timeout(Duration::from_millis(20));
-        state.open_session(vault_id, VaultKey([0u8; 32]));
+        state.open_session(vault_id, VaultKey::new([0u8; 32]));
         assert!(state.is_unlocked(vault_id));
         std::thread::sleep(Duration::from_millis(40));
         assert!(!state.is_unlocked(vault_id));
