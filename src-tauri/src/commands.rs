@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::{settings, totp, vault};
+use crate::{launcher, settings, totp, vault};
 
 /// How often (at most) a file transfer emits a progress event to the
 /// frontend. Chunk-by-chunk would be hundreds of IPC messages per second on
@@ -373,6 +373,31 @@ pub fn export_file(
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Decrypts a file directly to a location the user chose via a save
+/// dialog on the frontend, rather than the app-managed temp export folder.
+/// Unlike `export_file`, this path is not cleaned up by the app — it is now
+/// the user's own file, saved wherever they asked for it.
+#[tauri::command]
+pub fn export_file_to(
+    app: AppHandle,
+    state: State<AppState>,
+    vault_id: Uuid,
+    file_id: Uuid,
+    destination: String,
+) -> AppResult<()> {
+    let dek = state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    let file_name = vault::load_metadata(&vault_dir)?
+        .files
+        .into_iter()
+        .find(|f| f.id == file_id)
+        .map(|f| f.name)
+        .unwrap_or_default();
+
+    let on_progress = progress_emitter(&app, vault_id, file_name, "export");
+    vault::export_file_to(&vault_dir, &dek, file_id, &PathBuf::from(destination), on_progress)
+}
+
 /// Decrypts a small file fully into memory to render an inline preview
 /// (image or text) without exporting it. Anything larger than
 /// `PREVIEW_MAX_BYTES`, or of an unrecognized type, returns a variant the
@@ -497,4 +522,21 @@ pub fn set_auto_lock_seconds(app: AppHandle, state: State<AppState>, seconds: u6
     settings::save_auto_lock_secs(&app_data_dir(&app)?, seconds)?;
     state.set_auto_lock_timeout(Duration::from_secs(seconds));
     Ok(())
+}
+
+/// Returns the vault folder path the app was launched with (via a vault's
+/// launcher shortcut), if any, so the frontend can jump straight to
+/// unlocking that vault. Consumed on first read.
+#[tauri::command]
+pub fn get_launch_target(state: State<AppState>) -> Option<String> {
+    state.take_launch_target()
+}
+
+/// (Re)creates a vault's launcher shortcut — used both right after creation
+/// and as a settings action for vaults created before this feature existed.
+#[tauri::command]
+pub fn create_vault_launcher(app: AppHandle, state: State<AppState>, vault_id: Uuid) -> AppResult<()> {
+    state.get_active_dek(vault_id)?;
+    let vault_dir = vault::find_vault_path(&app_data_dir(&app)?, vault_id)?;
+    launcher::create_launcher(&vault_dir)
 }

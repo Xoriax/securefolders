@@ -29,8 +29,23 @@ function App() {
       .catch((err) => setError(errorMessage(err)));
   }
 
+  // On startup, jump straight to a vault's unlock screen if the app was
+  // launched via that vault's "Ouvrir avec SecureFolders.lnk" shortcut
+  // instead of directly.
   useEffect(() => {
-    refreshVaults();
+    (async () => {
+      const target = await api.getLaunchTarget().catch(() => null);
+      try {
+        const list = await api.listVaults();
+        setVaults(list);
+        if (target) {
+          const match = list.find((v) => v.path.toLowerCase() === target.toLowerCase());
+          if (match) setView({ kind: "unlock", vault: match });
+        }
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    })();
   }, []);
 
   function openVault(vault: VaultSummary) {

@@ -1,6 +1,8 @@
+mod acl;
 mod commands;
 mod crypto;
 mod error;
+mod launcher;
 mod settings;
 mod state;
 mod totp;
@@ -17,7 +19,6 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -31,6 +32,12 @@ pub fn run() {
                     app.state::<AppState>()
                         .set_auto_lock_timeout(Duration::from_secs(secs));
                 }
+            }
+            // Set when the app is launched via a vault's "Ouvrir avec
+            // SecureFolders.lnk" shortcut, which passes the vault folder
+            // path as its only argument (see `launcher::create_launcher`).
+            if let Some(path) = std::env::args().nth(1) {
+                app.state::<AppState>().set_launch_target(path);
             }
             Ok(())
         })
@@ -49,6 +56,7 @@ pub fn run() {
             commands::add_file,
             commands::remove_file,
             commands::export_file,
+            commands::export_file_to,
             commands::preview_file,
             commands::is_vault_unlocked,
             commands::delete_vault,
@@ -57,6 +65,8 @@ pub fn run() {
             commands::disable_totp,
             commands::get_auto_lock_seconds,
             commands::set_auto_lock_seconds,
+            commands::get_launch_target,
+            commands::create_vault_launcher,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../api";
 import type { FileEntry, TransferProgress, VaultSummary } from "../types";
 import { TotpSetupModal } from "./TotpSetupModal";
@@ -107,13 +107,12 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
     }
   }
 
-  async function handleExport(fileId: string) {
+  async function handleExport(file: FileEntry) {
     setError(null);
     try {
-      // Decrypted into an app-managed temp folder (never a user-chosen
-      // permanent location) and wiped again when the vault is locked.
-      const path = await api.exportFile(vault.id, fileId);
-      await openPath(path);
+      const destination = await save({ defaultPath: file.name });
+      if (!destination) return; // user cancelled the dialog
+      await api.exportFileTo(vault.id, file.id, destination);
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -182,7 +181,7 @@ export function VaultView({ vault, onLocked, onDeleted, onVaultUpdated }: Props)
               </div>
               <div className="row-actions">
                 <button onClick={() => setPreviewingFile(file)}>Apercu</button>
-                <button onClick={() => handleExport(file.id)}>Exporter</button>
+                <button onClick={() => handleExport(file)}>Exporter</button>
                 <button onClick={() => handleRemove(file.id)}>Supprimer</button>
               </div>
             </div>

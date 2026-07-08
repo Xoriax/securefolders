@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::crypto::{self, Argon2Params, VaultKey};
 use crate::error::{AppError, AppResult};
+use crate::{acl, launcher};
 
 const METADATA_FILE: &str = "vault.json";
 const FILES_DIR: &str = "files";
@@ -174,6 +175,12 @@ pub fn create_vault(
             AppError::Io(e)
         }
     })?;
+    // Deny-delete, applied before anything else exists under vault_dir so
+    // vault.json, files/, and everything added to it later all inherit the
+    // protection: Explorer (or any other process running as this user)
+    // can no longer delete the vault or its contents, only the app can —
+    // see `acl::allow_delete_once` / `allow_full_control_recursive` below.
+    acl::protect_from_deletion(&vault_dir)?;
     fs::create_dir_all(vault_dir.join(FILES_DIR))?;
 
     let salt = crypto::random_salt();
@@ -198,6 +205,12 @@ pub fn create_vault(
     };
     seal_integrity(&mut metadata, &dek);
     save_metadata(&vault_dir, &metadata)?;
+
+    // Best-effort: a missing shortcut is a convenience regression, not a
+    // reason to fail creating the vault outright.
+    if let Err(e) = launcher::create_launcher(&vault_dir) {
+        log::warn!("impossible de creer le raccourci de lancement pour {}: {e}", vault_dir.display());
+    }
 
     let mut index = load_index(app_data_dir)?;
     index.push(VaultIndexEntry {
@@ -246,6 +259,9 @@ pub fn find_vault_path(app_data_dir: &Path, vault_id: Uuid) -> AppResult<PathBuf
 pub fn delete_vault(app_data_dir: &Path, vault_id: Uuid) -> AppResult<()> {
     let vault_dir = find_vault_path(app_data_dir, vault_id)?;
     if vault_dir.exists() {
+        // Overrides the deny-delete protection set by `create_vault` for
+        // the whole tree at once, since we're removing all of it anyway.
+        acl::allow_full_control_recursive(&vault_dir)?;
         fs::remove_dir_all(&vault_dir)?;
     }
     let mut index = load_index(app_data_dir)?;
@@ -435,6 +451,9 @@ pub fn remove_file(vault_dir: &Path, file_id: Uuid) -> AppResult<()> {
 
     let encrypted_path = vault_dir.join(FILES_DIR).join(file_id.to_string());
     if encrypted_path.exists() {
+        // Overrides the deny-delete protection for this one file, inherited
+        // from the vault folder — see `acl::protect_from_deletion`.
+        acl::allow_delete_once(&encrypted_path)?;
         fs::remove_file(encrypted_path)?;
     }
     save_metadata(vault_dir, &metadata)
@@ -477,6 +496,29 @@ pub fn export_file(
         on_progress,
     )?;
     Ok(dest_path)
+}
+
+/// Decrypts a file straight to a location the user picked via a save
+/// dialog, instead of the app-managed temp folder `export_file` uses. The
+/// caller owns cleanup of this path — it is not tracked or wiped by
+/// `wipe_temp_exports`.
+pub fn export_file_to(
+    vault_dir: &Path,
+    dek: &VaultKey,
+    file_id: Uuid,
+    destination: &Path,
+    on_progress: impl FnMut(u64, u64),
+) -> AppResult<()> {
+    let metadata = load_metadata(vault_dir)?;
+    if !metadata.files.iter().any(|f| f.id == file_id) {
+        return Err(AppError::FileNotFound);
+    }
+    crypto::decrypt_file(
+        dek,
+        &vault_dir.join(FILES_DIR).join(file_id.to_string()),
+        destination,
+        on_progress,
+    )
 }
 
 /// Best-effort cleanup of every decrypted export for a vault. Called on
@@ -553,6 +595,19 @@ mod tests {
         create_vault(&app_data_dir, "Doublon", &location, "password123").unwrap();
         let result = create_vault(&app_data_dir, "Doublon", &location, "password123");
         assert!(matches!(result, Err(AppError::VaultAlreadyExists)));
+    }
+
+    #[test]
+    fn a_freshly_created_vault_cannot_be_deleted_by_bypassing_the_app() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Protege", &location, "password123").unwrap();
+
+        // Simulates Explorer (or any other process running as this user)
+        // trying to delete the vault directly, instead of going through
+        // `delete_vault`'s ACL override.
+        assert!(fs::remove_dir_all(&vault_dir).is_err());
+        assert!(vault_dir.exists());
     }
 
     #[test]
@@ -704,6 +759,27 @@ mod tests {
         remove_file(&vault_dir, entry.id).unwrap();
         assert!(matches!(
             export_file(&vault_dir, &dek, entry.id, |_, _| {}),
+            Err(AppError::FileNotFound)
+        ));
+    }
+
+    #[test]
+    fn export_file_to_decrypts_straight_to_a_chosen_destination() {
+        let (_root, app_data_dir, location) = fresh_dirs();
+        let (_metadata, vault_dir) =
+            create_vault(&app_data_dir, "Fichiers", &location, "password123").unwrap();
+        let (_metadata, dek) = unlock(&vault_dir, "password123").unwrap();
+
+        let mut source = tempfile::NamedTempFile::new().unwrap();
+        source.write_all(b"hello export").unwrap();
+        let entry = add_file(&vault_dir, &dek, source.path(), |_, _| {}).unwrap();
+
+        let destination = tempfile::NamedTempFile::new().unwrap().path().to_path_buf();
+        export_file_to(&vault_dir, &dek, entry.id, &destination, |_, _| {}).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"hello export");
+
+        assert!(matches!(
+            export_file_to(&vault_dir, &dek, Uuid::new_v4(), &destination, |_, _| {}),
             Err(AppError::FileNotFound)
         ));
     }

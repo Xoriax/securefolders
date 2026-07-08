@@ -48,6 +48,9 @@ export const api = {
   exportFile: (vaultId: string, fileId: string) =>
     invoke<string>("export_file", { vaultId, fileId }),
 
+  exportFileTo: (vaultId: string, fileId: string, destination: string) =>
+    invoke<void>("export_file_to", { vaultId, fileId, destination }),
+
   previewFile: (vaultId: string, fileId: string) =>
     invoke<FilePreview>("preview_file", { vaultId, fileId }),
 
@@ -68,6 +71,11 @@ export const api = {
 
   setAutoLockSeconds: (seconds: number) =>
     invoke<void>("set_auto_lock_seconds", { seconds }),
+
+  getLaunchTarget: () => invoke<string | null>("get_launch_target"),
+
+  createVaultLauncher: (vaultId: string) =>
+    invoke<void>("create_vault_launcher", { vaultId }),
 };
 
 export function errorMessage(err: unknown): string {
