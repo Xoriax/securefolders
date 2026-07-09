@@ -3,7 +3,7 @@
 [![CI](https://github.com/Xoriax/securefolders/actions/workflows/ci.yml/badge.svg)](https://github.com/Xoriax/securefolders/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Application desktop Windows permettant de créer des coffres de fichiers réellement chiffrés (AES-256-GCM), déverrouillables par mot de passe maître et, en option, par un second facteur TOTP (Google Authenticator, Microsoft Authenticator, Authy). Tout est stocké en local 
+Application desktop Windows permettant de créer des coffres de fichiers réellement chiffrés (AES-256-GCM), déverrouillables par mot de passe maître et, en option, par un second facteur TOTP (Google Authenticator, Microsoft Authenticator, Authy). Tout est stocké en local  
 Aucune donnée n'est envoyée sur Internet.
 
 ## Stack
